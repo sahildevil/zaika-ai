@@ -3,14 +3,17 @@ import { useRecipes } from "../../context/RecipeContext";
 import TagFilter from "../../components/TagFilter";
 import RecipeCard from "../../components/RecipeCard";
 import { useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 export default function CommunityPage() {
   const { communityRecipes, toggleTag } = useRecipes();
   const params = useSearchParams();
   const tagQuery = params.get("tags");
+  const didInit = useRef(false);
 
   useEffect(() => {
+    if (didInit.current) return;
+    didInit.current = true;
     if (tagQuery) tagQuery.split(",").forEach((t) => toggleTag(t));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -31,9 +34,10 @@ export default function CommunityPage() {
           <RecipeCard key={r.id} recipe={r} />
         ))}
         {communityRecipes.length === 0 && (
-          <p className="text-sm text-white/50">
-            No recipes match selected tags.
-          </p>
+          <div className="text-sm text-white/60">
+            <p>No recipes match selected tags.</p>
+            <p className="mt-1 text-white/45">Try clearing some filters.</p>
+          </div>
         )}
       </div>
     </div>

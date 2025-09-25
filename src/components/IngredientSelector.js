@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useMemo } from "react";
 
 const MASTER_INGREDIENTS = [
   "Tomato",
@@ -24,11 +25,17 @@ const MASTER_INGREDIENTS = [
   "Beans",
 ];
 
-export default function IngredientSelector({ value, onChange, fasting }) {
+import { memo } from "react";
+
+function IngredientSelector({ value, onChange, fasting }) {
   const [query, setQuery] = useState("");
-  const filtered = MASTER_INGREDIENTS.filter((i) =>
-    i.toLowerCase().includes(query.toLowerCase())
-  ).filter((i) => !fasting || !["Onion", "Garlic", "Chicken"].includes(i));
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase().trim();
+    const base = q
+      ? MASTER_INGREDIENTS.filter((i) => i.toLowerCase().includes(q))
+      : MASTER_INGREDIENTS;
+    return base.filter((i) => !fasting || !["Onion", "Garlic", "Chicken"].includes(i));
+  }, [query, fasting]);
 
   function toggle(ing) {
     if (value.includes(ing)) onChange(value.filter((v) => v !== ing));
@@ -65,3 +72,5 @@ export default function IngredientSelector({ value, onChange, fasting }) {
     </div>
   );
 }
+
+export default memo(IngredientSelector);

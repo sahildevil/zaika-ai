@@ -1,6 +1,6 @@
 "use client";
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRecipes } from "../../context/RecipeContext";
 import IngredientSelector from "../../components/IngredientSelector";
 import RecipeCard from "../../components/RecipeCard";
@@ -15,7 +15,7 @@ export default function GeneratePage() {
   const preFasting = params.get("fasting") === "true";
   const preCalorie = params.get("calorie");
 
-  const { generateRecipe, generatedRecipe, saveGenerated, user } = useRecipes();
+  const { generateRecipe, generatedRecipe, generatedBatch, saveGenerated, user } = useRecipes();
   const [diet, setDiet] = useState("Veg");
   const [mealType, setMealType] = useState("Lunch");
   const [calorieRange, setCalorieRange] = useState(
@@ -26,24 +26,37 @@ export default function GeneratePage() {
   const [customCalories, setCustomCalories] = useState(500);
   const [fasting, setFasting] = useState(preFasting);
   const [ingredients, setIngredients] = useState([]);
+  const [servings, setServings] = useState(1);
+  const [spiceLevel, setSpiceLevel] = useState("Medium");
   const [loading, setLoading] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState("");
+
+  const canSubmit = useMemo(() => ingredients.length >= 3 && !loading && !isPending, [ingredients.length, loading, isPending]);
 
   function onSubmit(e) {
     e.preventDefault();
     if (ingredients.length < 3) return alert("Select at least 3 ingredients");
+    setError("");
     setLoading(true);
-    setTimeout(() => {
-      // simulate latency
-      generateRecipe({
+    startTransition(async () => {
+      try {
+        await generateRecipe({
         diet,
         mealType,
         calorieRange,
         customCalories,
         fasting,
         ingredients,
-      });
-      setLoading(false);
-    }, 600);
+        servings,
+        spiceLevel,
+        });
+      } catch (e) {
+        setError(e?.message || "Failed to generate");
+      } finally {
+        setLoading(false);
+      }
+    });
   }
 
   return (
@@ -133,6 +146,33 @@ export default function GeneratePage() {
               </p>
             )}
           </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-white/60">
+              Servings
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={8}
+              value={servings}
+              onChange={(e) => setServings(Number(e.target.value))}
+              className="w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-wide text-white/60">
+              Spice Level
+            </label>
+            <select
+              value={spiceLevel}
+              onChange={(e) => setSpiceLevel(e.target.value)}
+              className="w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
+            >
+              {["Mild","Medium","Hot"].map((lvl) => (
+                <option key={lvl} className="bg-[var(--background-alt)]">{lvl}</option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-wide text-white/60">
@@ -145,25 +185,27 @@ export default function GeneratePage() {
           />
         </div>
         <button
-          disabled={loading}
+          disabled={!canSubmit}
           type="submit"
           className="relative group rounded-xl px-5 py-2.5 text-sm font-medium text-white bg-[linear-gradient(120deg,rgba(var(--accent-rgb)/0.25),rgba(var(--accent-rgb)/0.1))] border border-[rgba(var(--accent-rgb)/0.5)] hover:bg-[linear-gradient(120deg,rgba(var(--accent-rgb)/0.4),rgba(var(--accent-rgb)/0.15))] disabled:opacity-50"
         >
-          <span className="relative z-10">Generate Recipe</span>
+          <span className="relative z-10">{loading || isPending ? "Generating..." : "Generate Recipe"}</span>
           <span className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition shadow-[0_0_0_1px_rgba(var(--accent-rgb)/0.4),0_0_18px_-2px_rgba(var(--accent-rgb)/0.5)]" />
         </button>
       </form>
 
       {loading && <LoadingSpinner />}
+      {error && <p className="text-xs text-red-400">{error}</p>}
 
-      {generatedRecipe && !loading && (
+      {generatedBatch?.length > 0 && !loading && (
         <div className="space-y-4">
-          <h3 className="font-semibold text-white/85">Generated Recipe</h3>
-          <RecipeCard
-            recipe={generatedRecipe}
-            onSave={user ? saveGenerated : undefined}
-          />
-          {!user && <p className="text-xs text-white/45">Sign in to save.</p>}
+          <h3 className="font-semibold text-white/85">AI Suggestions</h3>
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {generatedBatch.map((dish) => (
+              <RecipeCard key={dish.id || dish.title} recipe={dish} onSave={user ? () => saveGenerated(dish) : undefined} />
+            ))}
+          </div>
+          {!user && <p className="text-xs text-white/45">Sign in to save dishes.</p>}
         </div>
       )}
     </div>

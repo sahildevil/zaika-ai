@@ -1,6 +1,10 @@
 import { motion } from "framer-motion";
+import { memo } from "react";
+import { useRecipes } from "../context/RecipeContext";
 
-export default function RecipeCard({ recipe, onSave }) {
+function RecipeCard({ recipe, onSave }) {
+  const { isSaved, toggleSave } = useRecipes();
+  const saved = isSaved?.(recipe.id);
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
@@ -15,15 +19,24 @@ export default function RecipeCard({ recipe, onSave }) {
         <h4 className="font-semibold text-sm md:text-base leading-snug text-white/90 group-hover:text-white transition">
           {recipe.title}
         </h4>
-        {onSave && (
+        {(onSave || toggleSave) && (
           <button
-            onClick={onSave}
-            className="text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border border-[rgba(var(--accent-rgb)/0.5)] text-white/80 hover:text-white/95 hover:bg-[rgba(var(--accent-rgb)/0.15)] transition"
+            onClick={() => (onSave ? onSave() : toggleSave?.(recipe.id))}
+            className={`text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border transition ${
+              saved
+                ? "border-[rgba(var(--accent-rgb)/0.7)] text-white/95 bg-[rgba(var(--accent-rgb)/0.2)]"
+                : "border-[rgba(var(--accent-rgb)/0.5)] text-white/80 hover:text-white/95 hover:bg-[rgba(var(--accent-rgb)/0.15)]"
+            }`}
           >
-            Save
+            {saved ? "Saved" : "Save"}
           </button>
         )}
       </div>
+      {recipe.image && (
+        <div className="relative rounded-xl overflow-hidden border border-white/10 aspect-video">
+          <img src={recipe.image} alt={recipe.title} className="w-full h-full object-cover" loading="lazy" />
+        </div>
+      )}
       <div className="flex flex-wrap gap-1.5 relative z-10">
         {recipe.tags?.map((t) => (
           <span
@@ -73,3 +86,5 @@ export default function RecipeCard({ recipe, onSave }) {
     </motion.div>
   );
 }
+
+export default memo(RecipeCard);

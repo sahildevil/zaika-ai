@@ -2,9 +2,15 @@
 import { useRecipes } from "../../context/RecipeContext";
 import RecipeCard from "../../components/RecipeCard";
 import Link from "next/link";
+import { useMemo, useState } from "react";
 
 export default function ProfilePage() {
-  const { user, savedRecipes } = useRecipes();
+  const { user, savedRecipes, updateProfile, signOut, preferences, updatePreferences } = useRecipes();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(user?.name || "");
+  const [email, setEmail] = useState(user?.email || "");
+  const [spice, setSpice] = useState(preferences?.spice || "Medium");
+  const [servings, setServings] = useState(preferences?.servings || 1);
   if (!user)
     return (
       <div className="space-y-4">
@@ -19,11 +25,47 @@ export default function ProfilePage() {
     );
   return (
     <div className="space-y-8">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-2xl font-semibold">{user.name}&apos;s Recipes</h2>
-        <p className="text-sm text-neutral-600">
-          Saved generative outputs appear here.
-        </p>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-2xl font-semibold">Profile</h2>
+          <button onClick={signOut} className="text-xs underline text-white/70 hover:text-white">Sign out</button>
+        </div>
+        <div className="glass p-5 rounded-2xl border border-white/10 grid sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] uppercase tracking-wide text-white/50">Name</label>
+            <input disabled={!editing} value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wide text-white/50">Email</label>
+            <input disabled={!editing} value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]" />
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wide text-white/50">Preferred Spice</label>
+            <select disabled={!editing} value={spice} onChange={(e) => setSpice(e.target.value)} className="mt-1 w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]">
+              {["Mild","Medium","Hot"].map((s) => (
+                <option key={s} className="bg-[var(--background-alt)]">{s}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] uppercase tracking-wide text-white/50">Default Servings</label>
+            <input disabled={!editing} type="number" min={1} max={8} value={servings} onChange={(e) => setServings(Number(e.target.value))} className="mt-1 w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]" />
+          </div>
+          <div className="sm:col-span-2 flex gap-3">
+            {!editing ? (
+              <button onClick={() => setEditing(true)} className="text-xs px-3 py-2 rounded-md border border-white/15 hover:border-[rgba(var(--accent-rgb)/0.5)]">Edit</button>
+            ) : (
+              <>
+                <button onClick={() => { updateProfile(name, email); updatePreferences({ spice, servings }); setEditing(false); }} className="text-xs px-3 py-2 rounded-md border border-[rgba(var(--accent-rgb)/0.5)] bg-[rgba(var(--accent-rgb)/0.15)]">Save</button>
+                <button onClick={() => { setName(user.name); setEmail(user.email); setSpice(preferences.spice); setServings(preferences.servings); setEditing(false); }} className="text-xs px-3 py-2 rounded-md border border-white/15">Cancel</button>
+              </>
+            )}
+          </div>
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold text-white/90">Saved Recipes</h3>
+          <p className="text-sm text-white/55">Saved generative outputs appear here.</p>
+        </div>
       </div>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {savedRecipes.map((r) => (

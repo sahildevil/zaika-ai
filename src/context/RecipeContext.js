@@ -1,5 +1,12 @@
 "use client";
-import { createContext, useContext, useState, useCallback } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+} from "react";
 
 /*
   RecipeContext provides temporary in-memory state for:
@@ -10,7 +17,7 @@ import { createContext, useContext, useState, useCallback } from "react";
   This is a frontend-only scaffold; replace with real API calls later.
 */
 
-const defaultUser = { id: "u1", name: "Demo User", email: "demo@zaika.ai" };
+const defaultUser = null;
 
 const initialCommunity = [
   {
@@ -36,60 +43,105 @@ const RecipeContext = createContext(null);
 export function RecipeProvider({ children }) {
   const [user, setUser] = useState(defaultUser); // null means signed out
   const [generatedRecipe, setGeneratedRecipe] = useState(null);
+  const [generatedBatch, setGeneratedBatch] = useState([]);
   const [savedRecipes, setSavedRecipes] = useState([]);
   const [communityRecipes, setCommunityRecipes] = useState(initialCommunity);
   const [filterTags, setFilterTags] = useState([]);
+  const [preferences, setPreferences] = useState({ spice: "Medium", servings: 1 });
 
-  const signIn = (email) => {
-    setUser({ id: "u1", name: "Demo User", email });
-  };
-  const signUp = (name, email) => {
+  // Hydrate from localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("zaika-state");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed.user !== undefined) setUser(parsed.user);
+      if (Array.isArray(parsed.savedRecipes)) setSavedRecipes(parsed.savedRecipes);
+      if (Array.isArray(parsed.communityRecipes))
+        setCommunityRecipes((prev) => {
+          // Merge by id to keep seed items while allowing user-created additions
+          const byId = new Map([...prev, ...parsed.communityRecipes].map((r) => [r.id, r]));
+          return Array.from(byId.values());
+        });
+    } catch {}
+  }, []);
+
+  // Persist to localStorage (throttled by React batching)
+  useEffect(() => {
+    try {
+      const payload = JSON.stringify({ user, savedRecipes, communityRecipes, preferences });
+      localStorage.setItem("zaika-state", payload);
+    } catch {}
+  }, [user, savedRecipes, communityRecipes, preferences]);
+
+  // Hardcoded demo users
+  const demoUsers = useMemo(
+    () => [
+      { id: "u1", name: "Demo User", email: "demo@zaika.ai", password: "zaika123" },
+      { id: "u2", name: "Chef Asha", email: "asha@zaika.ai", password: "tastebud" },
+    ],
+    []
+  );
+
+  const signIn = useCallback((email) => {
+    // Backward compatibility if only email is provided (older UI)
+    if (typeof email === "string") {
+      const match = demoUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+      if (match) {
+        setUser({ id: match.id, name: match.name, email: match.email });
+        return true;
+      }
+      setUser({ id: "u1", name: "Demo User", email });
+      return true;
+    }
+    // If called with object { email, password }
+    const creds = email;
+    const match = demoUsers.find(
+      (u) =>
+        u.email.toLowerCase() === String(creds?.email || "").toLowerCase() &&
+        u.password === creds?.password
+    );
+    if (match) {
+      setUser({ id: match.id, name: match.name, email: match.email });
+      return true;
+    }
+    return false;
+  }, [demoUsers]);
+  const signUp = useCallback((name, email) => {
     setUser({ id: Date.now().toString(), name, email });
-  };
-  const signOut = () => setUser(null);
+  }, []);
+  const signOut = useCallback(() => setUser(null), []);
+  const updateProfile = useCallback((name, email) => {
+    setUser((u) => (u ? { ...u, name: name ?? u.name, email: email ?? u.email } : u));
+  }, []);
+  const updatePreferences = useCallback((next) => {
+    setPreferences((p) => ({ ...p, ...next }));
+  }, []);
 
   const generateRecipe = useCallback(
-    (form) => {
-      // Mock AI generation logic
-      const id = Date.now().toString();
-      const baseTitle = `${form.fasting ? "Fasting " : ""}${form.diet} ${
-        form.mealType
-      } Bowl`;
-      const ingredients = form.ingredients.map((i) => ({
-        name: i,
-        quantity: "1 unit",
-      }));
-      const recipe = {
-        id,
-        title: baseTitle,
-        diet: form.diet,
-        mealType: form.mealType,
-        fasting: form.fasting,
-        calories:
-          form.calorieRange === "Custom"
-            ? form.customCalories
-            : form.calorieRange === "Low"
-            ? 300
-            : form.calorieRange === "Medium"
-            ? 500
-            : 750,
-        ingredients,
-        steps: [
-          "Prep all ingredients.",
-          "Combine in pan / bowl as appropriate.",
-          "Season to taste.",
-          "Serve warm.",
-        ],
-        nutrition: { protein: 20, carbs: 45, fat: 15 },
-        youtube:
-          "https://www.youtube.com/results?search_query=" +
-          encodeURIComponent(baseTitle + " recipe"),
-        tags: buildTags(form),
-        createdAt: new Date().toISOString(),
-        authorId: user?.id || null,
-      };
-      setGeneratedRecipe(recipe);
-      return recipe;
+    async (form) => {
+      // Call server API (Gemini)
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error("Generation failed");
+      const data = await res.json();
+      const dishes = Array.isArray(data?.dishes) ? data.dishes : [];
+      setGeneratedBatch(dishes);
+      const first = dishes[0] || null;
+      setGeneratedRecipe(first);
+      // Share all to community with unique ids
+      setCommunityRecipes((prev) => {
+        const byId = new Map(prev.map((r) => [r.id, r]));
+        for (const d of dishes) {
+          const id = d.id || String(Date.now()) + Math.random().toString(36).slice(2, 7);
+          byId.set(id, { ...d, id, authorId: user?.id || null, tags: d.tags || buildTags(form) });
+        }
+        return Array.from(byId.values());
+      });
+      return dishes;
     },
     [user]
   );
@@ -103,42 +155,109 @@ export function RecipeProvider({ children }) {
     return tags;
   }
 
-  const saveGenerated = () => {
-    if (!generatedRecipe) return;
-    setSavedRecipes((r) => [...r, generatedRecipe]);
-    setCommunityRecipes((r) => [...r, generatedRecipe]);
-  };
+  const isSaved = useCallback(
+    (id) => savedRecipes.some((r) => r.id === id),
+    [savedRecipes]
+  );
 
-  const toggleTag = (tag) => {
+  const saveGenerated = useCallback((recipe) => {
+    const item = recipe || generatedRecipe;
+    if (!item) return;
+    setSavedRecipes((r) => (r.some((x) => x.id === item.id) ? r : [...r, item]));
+    setCommunityRecipes((r) => (r.some((x) => x.id === item.id) ? r : [...r, item]));
+  }, [generatedRecipe]);
+
+  const removeSaved = useCallback((id) => {
+    setSavedRecipes((r) => r.filter((x) => x.id !== id));
+  }, []);
+
+  const saveById = useCallback(
+    (id) => {
+      setSavedRecipes((r) => {
+        if (r.some((x) => x.id === id)) return r;
+        const item = communityRecipes.find((x) => x.id === id);
+        return item ? [...r, item] : r;
+      });
+    },
+    [communityRecipes]
+  );
+
+  const toggleSave = useCallback(
+    (id) => {
+      setSavedRecipes((r) =>
+        r.some((x) => x.id === id)
+          ? r.filter((x) => x.id !== id)
+          : (() => {
+              const item = communityRecipes.find((x) => x.id === id);
+              return item ? [...r, item] : r;
+            })()
+      );
+    },
+    [communityRecipes]
+  );
+
+  const toggleTag = useCallback((tag) => {
     setFilterTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
     );
-  };
+  }, []);
 
-  const filteredCommunity = communityRecipes.filter(
-    (r) =>
-      filterTags.length === 0 || filterTags.every((t) => r.tags.includes(t))
+  const filteredCommunity = useMemo(
+    () =>
+      communityRecipes.filter(
+        (r) => filterTags.length === 0 || filterTags.every((t) => r.tags.includes(t))
+      ),
+    [communityRecipes, filterTags]
+  );
+
+  const contextValue = useMemo(
+    () => ({
+      user,
+      signIn,
+      signUp,
+      signOut,
+      updateProfile,
+      preferences,
+      updatePreferences,
+      generateRecipe,
+      generatedRecipe,
+      generatedBatch,
+      saveGenerated,
+      removeSaved,
+      isSaved,
+      saveById,
+      toggleSave,
+      savedRecipes,
+      communityRecipes: filteredCommunity,
+      allCommunity: communityRecipes,
+      filterTags,
+      toggleTag,
+    }),
+    [
+      user,
+      signIn,
+      signUp,
+      signOut,
+      updateProfile,
+      preferences,
+      updatePreferences,
+      generateRecipe,
+      generatedRecipe,
+      saveGenerated,
+      removeSaved,
+      isSaved,
+      saveById,
+      toggleSave,
+      savedRecipes,
+      filteredCommunity,
+      communityRecipes,
+      filterTags,
+      toggleTag,
+    ]
   );
 
   return (
-    <RecipeContext.Provider
-      value={{
-        user,
-        signIn,
-        signUp,
-        signOut,
-        generateRecipe,
-        generatedRecipe,
-        saveGenerated,
-        savedRecipes,
-        communityRecipes: filteredCommunity,
-        allCommunity: communityRecipes,
-        filterTags,
-        toggleTag,
-      }}
-    >
-      {children}
-    </RecipeContext.Provider>
+    <RecipeContext.Provider value={contextValue}>{children}</RecipeContext.Provider>
   );
 }
 
