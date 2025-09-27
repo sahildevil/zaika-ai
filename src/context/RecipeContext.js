@@ -47,7 +47,10 @@ export function RecipeProvider({ children }) {
   const [savedRecipes, setSavedRecipes] = useState([]);
   const [communityRecipes, setCommunityRecipes] = useState(initialCommunity);
   const [filterTags, setFilterTags] = useState([]);
-  const [preferences, setPreferences] = useState({ spice: "Medium", servings: 1 });
+  const [preferences, setPreferences] = useState({
+    spice: "Medium",
+    servings: 1,
+  });
 
   // Hydrate from localStorage
   useEffect(() => {
@@ -56,11 +59,14 @@ export function RecipeProvider({ children }) {
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed.user !== undefined) setUser(parsed.user);
-      if (Array.isArray(parsed.savedRecipes)) setSavedRecipes(parsed.savedRecipes);
+      if (Array.isArray(parsed.savedRecipes))
+        setSavedRecipes(parsed.savedRecipes);
       if (Array.isArray(parsed.communityRecipes))
         setCommunityRecipes((prev) => {
           // Merge by id to keep seed items while allowing user-created additions
-          const byId = new Map([...prev, ...parsed.communityRecipes].map((r) => [r.id, r]));
+          const byId = new Map(
+            [...prev, ...parsed.communityRecipes].map((r) => [r.id, r])
+          );
           return Array.from(byId.values());
         });
     } catch {}
@@ -69,7 +75,12 @@ export function RecipeProvider({ children }) {
   // Persist to localStorage (throttled by React batching)
   useEffect(() => {
     try {
-      const payload = JSON.stringify({ user, savedRecipes, communityRecipes, preferences });
+      const payload = JSON.stringify({
+        user,
+        savedRecipes,
+        communityRecipes,
+        preferences,
+      });
       localStorage.setItem("zaika-state", payload);
     } catch {}
   }, [user, savedRecipes, communityRecipes, preferences]);
@@ -77,42 +88,59 @@ export function RecipeProvider({ children }) {
   // Hardcoded demo users
   const demoUsers = useMemo(
     () => [
-      { id: "u1", name: "Demo User", email: "demo@zaika.ai", password: "zaika123" },
-      { id: "u2", name: "Chef Asha", email: "asha@zaika.ai", password: "tastebud" },
+      {
+        id: "u1",
+        name: "Demo User",
+        email: "demo@zaika.ai",
+        password: "zaika123",
+      },
+      {
+        id: "u2",
+        name: "Chef Asha",
+        email: "asha@zaika.ai",
+        password: "tastebud",
+      },
     ],
     []
   );
 
-  const signIn = useCallback((email) => {
-    // Backward compatibility if only email is provided (older UI)
-    if (typeof email === "string") {
-      const match = demoUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const signIn = useCallback(
+    (email) => {
+      // Backward compatibility if only email is provided (older UI)
+      if (typeof email === "string") {
+        const match = demoUsers.find(
+          (u) => u.email.toLowerCase() === email.toLowerCase()
+        );
+        if (match) {
+          setUser({ id: match.id, name: match.name, email: match.email });
+          return true;
+        }
+        setUser({ id: "u1", name: "Demo User", email });
+        return true;
+      }
+      // If called with object { email, password }
+      const creds = email;
+      const match = demoUsers.find(
+        (u) =>
+          u.email.toLowerCase() === String(creds?.email || "").toLowerCase() &&
+          u.password === creds?.password
+      );
       if (match) {
         setUser({ id: match.id, name: match.name, email: match.email });
         return true;
       }
-      setUser({ id: "u1", name: "Demo User", email });
-      return true;
-    }
-    // If called with object { email, password }
-    const creds = email;
-    const match = demoUsers.find(
-      (u) =>
-        u.email.toLowerCase() === String(creds?.email || "").toLowerCase() &&
-        u.password === creds?.password
-    );
-    if (match) {
-      setUser({ id: match.id, name: match.name, email: match.email });
-      return true;
-    }
-    return false;
-  }, [demoUsers]);
+      return false;
+    },
+    [demoUsers]
+  );
   const signUp = useCallback((name, email) => {
     setUser({ id: Date.now().toString(), name, email });
   }, []);
   const signOut = useCallback(() => setUser(null), []);
   const updateProfile = useCallback((name, email) => {
-    setUser((u) => (u ? { ...u, name: name ?? u.name, email: email ?? u.email } : u));
+    setUser((u) =>
+      u ? { ...u, name: name ?? u.name, email: email ?? u.email } : u
+    );
   }, []);
   const updatePreferences = useCallback((next) => {
     setPreferences((p) => ({ ...p, ...next }));
@@ -136,8 +164,14 @@ export function RecipeProvider({ children }) {
       setCommunityRecipes((prev) => {
         const byId = new Map(prev.map((r) => [r.id, r]));
         for (const d of dishes) {
-          const id = d.id || String(Date.now()) + Math.random().toString(36).slice(2, 7);
-          byId.set(id, { ...d, id, authorId: user?.id || null, tags: d.tags || buildTags(form) });
+          const id =
+            d.id || String(Date.now()) + Math.random().toString(36).slice(2, 7);
+          byId.set(id, {
+            ...d,
+            id,
+            authorId: user?.id || null,
+            tags: d.tags || buildTags(form),
+          });
         }
         return Array.from(byId.values());
       });
@@ -160,12 +194,19 @@ export function RecipeProvider({ children }) {
     [savedRecipes]
   );
 
-  const saveGenerated = useCallback((recipe) => {
-    const item = recipe || generatedRecipe;
-    if (!item) return;
-    setSavedRecipes((r) => (r.some((x) => x.id === item.id) ? r : [...r, item]));
-    setCommunityRecipes((r) => (r.some((x) => x.id === item.id) ? r : [...r, item]));
-  }, [generatedRecipe]);
+  const saveGenerated = useCallback(
+    (recipe) => {
+      const item = recipe || generatedRecipe;
+      if (!item) return;
+      setSavedRecipes((r) =>
+        r.some((x) => x.id === item.id) ? r : [...r, item]
+      );
+      setCommunityRecipes((r) =>
+        r.some((x) => x.id === item.id) ? r : [...r, item]
+      );
+    },
+    [generatedRecipe]
+  );
 
   const removeSaved = useCallback((id) => {
     setSavedRecipes((r) => r.filter((x) => x.id !== id));
@@ -205,7 +246,8 @@ export function RecipeProvider({ children }) {
   const filteredCommunity = useMemo(
     () =>
       communityRecipes.filter(
-        (r) => filterTags.length === 0 || filterTags.every((t) => r.tags.includes(t))
+        (r) =>
+          filterTags.length === 0 || filterTags.every((t) => r.tags.includes(t))
       ),
     [communityRecipes, filterTags]
   );
@@ -243,6 +285,7 @@ export function RecipeProvider({ children }) {
       updatePreferences,
       generateRecipe,
       generatedRecipe,
+      generatedBatch,
       saveGenerated,
       removeSaved,
       isSaved,
@@ -257,7 +300,9 @@ export function RecipeProvider({ children }) {
   );
 
   return (
-    <RecipeContext.Provider value={contextValue}>{children}</RecipeContext.Provider>
+    <RecipeContext.Provider value={contextValue}>
+      {children}
+    </RecipeContext.Provider>
   );
 }
 

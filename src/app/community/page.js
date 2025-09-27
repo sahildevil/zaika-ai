@@ -3,13 +3,23 @@ import { useRecipes } from "../../context/RecipeContext";
 import TagFilter from "../../components/TagFilter";
 import RecipeCard from "../../components/RecipeCard";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import RecipeModal from "../../components/RecipeModal";
 
 export default function CommunityPage() {
+  return (
+    <Suspense fallback={<div className="text-white/60 text-sm">Loading…</div>}>
+      <CommunityPageContent />
+    </Suspense>
+  );
+}
+
+function CommunityPageContent() {
   const { communityRecipes, toggleTag } = useRecipes();
   const params = useSearchParams();
   const tagQuery = params.get("tags");
   const didInit = useRef(false);
+  const [activeRecipe, setActiveRecipe] = useState(null);
 
   useEffect(() => {
     if (didInit.current) return;
@@ -31,7 +41,7 @@ export default function CommunityPage() {
       <TagFilter />
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {communityRecipes.map((r) => (
-          <RecipeCard key={r.id} recipe={r} />
+          <RecipeCard key={r.id} recipe={r} onView={() => setActiveRecipe(r)} />
         ))}
         {communityRecipes.length === 0 && (
           <div className="text-sm text-white/60">
@@ -40,6 +50,10 @@ export default function CommunityPage() {
           </div>
         )}
       </div>
+      <RecipeModal
+        recipe={activeRecipe}
+        onClose={() => setActiveRecipe(null)}
+      />
     </div>
   );
 }

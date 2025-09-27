@@ -1,10 +1,19 @@
+"use client";
 import { motion } from "framer-motion";
-import { memo } from "react";
+import { memo, useMemo, useState } from "react";
 import { useRecipes } from "../context/RecipeContext";
+import Image from "next/image";
 
-function RecipeCard({ recipe, onSave }) {
+function RecipeCard({ recipe, onSave, onView }) {
   const { isSaved, toggleSave } = useRecipes();
   const saved = isSaved?.(recipe.id);
+  const [imgLoaded, setImgLoaded] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
+  const fallbackSrc = useMemo(() => {
+    if (recipe.fallbackImage) return recipe.fallbackImage;
+    const seed = encodeURIComponent(recipe.title || "zaika");
+    return `https://picsum.photos/seed/${seed}/800/450`;
+  }, [recipe.title, recipe.fallbackImage]);
   return (
     <motion.div
       initial={{ opacity: 0, y: 14 }}
@@ -19,22 +28,47 @@ function RecipeCard({ recipe, onSave }) {
         <h4 className="font-semibold text-sm md:text-base leading-snug text-white/90 group-hover:text-white transition">
           {recipe.title}
         </h4>
-        {(onSave || toggleSave) && (
-          <button
-            onClick={() => (onSave ? onSave() : toggleSave?.(recipe.id))}
-            className={`text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border transition ${
-              saved
-                ? "border-[rgba(var(--accent-rgb)/0.7)] text-white/95 bg-[rgba(var(--accent-rgb)/0.2)]"
-                : "border-[rgba(var(--accent-rgb)/0.5)] text-white/80 hover:text-white/95 hover:bg-[rgba(var(--accent-rgb)/0.15)]"
-            }`}
-          >
-            {saved ? "Saved" : "Save"}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {onView && (
+            <button
+              onClick={onView}
+              className="text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border border-white/15 text-white/80 hover:text-white/95 hover:bg-white/5 transition"
+            >
+              View
+            </button>
+          )}
+          {(onSave || toggleSave) && (
+            <button
+              onClick={() => (onSave ? onSave() : toggleSave?.(recipe.id))}
+              className={`text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border transition ${
+                saved
+                  ? "border-[rgba(var(--accent-rgb)/0.7)] text-white/95 bg-[rgba(var(--accent-rgb)/0.2)]"
+                  : "border-[rgba(var(--accent-rgb)/0.5)] text-white/80 hover:text-white/95 hover:bg-[rgba(var(--accent-rgb)/0.15)]"
+              }`}
+            >
+              {saved ? "Saved" : "Save"}
+            </button>
+          )}
+        </div>
       </div>
       {recipe.image && (
         <div className="relative rounded-xl overflow-hidden border border-white/10 aspect-video">
-          <img src={recipe.image} alt={recipe.title} className="w-full h-full object-cover" loading="lazy" />
+          {/* Skeleton shimmer while loading */}
+          {!imgLoaded && !imgFailed && (
+            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(120deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]" />
+          )}
+          <Image
+            src={imgFailed ? fallbackSrc : recipe.image}
+            alt={recipe.title}
+            fill
+            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+            className="object-cover"
+            priority={false}
+            placeholder="blur"
+            blurDataURL="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mP8z8DwHwAFKQJ4qf2qngAAAABJRU5ErkJggg=="
+            onLoadingComplete={() => setImgLoaded(true)}
+            onError={() => setImgFailed(true)}
+          />
         </div>
       )}
       <div className="flex flex-wrap gap-1.5 relative z-10">
@@ -49,7 +83,10 @@ function RecipeCard({ recipe, onSave }) {
       </div>
       <div className="grid grid-cols-2 gap-2 text-[10px] text-white/55 relative z-10">
         <p>
-          Calories: <span className="text-white/80">{recipe.calories}</span>
+          Calories:{" "}
+          <span className="text-white/80">
+            {recipe?.nutrition?.calories ?? recipe?.calories}
+          </span>
         </p>
         <p>
           Macros:{" "}
@@ -64,25 +101,27 @@ function RecipeCard({ recipe, onSave }) {
           <li key={i}>{s}</li>
         ))}
       </ul>
-      <a
-        href={recipe.youtube}
-        target="_blank"
-        className="text-[11px] relative z-10 text-[rgba(var(--accent-rgb)/0.9)] hover:underline inline-flex items-center gap-1"
-      >
-        <span>YouTube suggestions</span>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth="2"
-          fill="none"
-          className="opacity-70 group-hover:translate-x-[2px] transition"
-          aria-hidden
+      {recipe.youtube && (
+        <a
+          href={recipe.youtube}
+          target="_blank"
+          className="text-[11px] relative z-10 text-[rgba(var(--accent-rgb)/0.9)] hover:underline inline-flex items-center gap-1"
         >
-          <path d="M7 17L17 7M8 7h9v9" />
-        </svg>
-      </a>
+          <span>YouTube suggestions</span>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2"
+            fill="none"
+            className="opacity-70 group-hover:translate-x-[2px] transition"
+            aria-hidden
+          >
+            <path d="M7 17L17 7M8 7h9v9" />
+          </svg>
+        </a>
+      )}
     </motion.div>
   );
 }
