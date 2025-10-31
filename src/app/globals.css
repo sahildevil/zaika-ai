@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Design Tokens */
+/* Design Tokens - Dark defaults */
 :root {
   --background: #050507;
   --background-alt: #0d0f16;
@@ -25,6 +25,18 @@
     0 0 0 1px rgba(255, 255, 255, 0.04);
   --glow: 0 0 0 1px rgba(var(--accent-rgb) / 0.4),
     0 0 12px -2px rgba(var(--accent-rgb) / 0.35);
+}
+
+/* Light theme overrides */
+[data-theme="light"] {
+  --background: #f6f8fa;
+  --background-alt: #ffffff;
+  --panel: rgba(0, 0, 0, 0.04);
+  --panel-solid: #ffffff;
+  --panel-border: rgba(0, 0, 0, 0.08);
+  --panel-border-glow: rgba(13, 109, 217, 0.25);
+  --foreground: #111827;
+  --muted: #4b5563;
 }
 
 @theme inline {
@@ -64,6 +76,15 @@ body {
   font-family: var(--font-sans), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+[data-theme="light"] body {
+  background: radial-gradient(
+    circle at 25% 20%,
+    #f0f5ff,
+    #ffffff 60%,
+    #f8fafc 85%
+  );
 }
 
 /* Scrollbar subtle styling */

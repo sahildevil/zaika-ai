@@ -3,10 +3,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRecipes } from "../context/RecipeContext";
 import { motion } from "framer-motion";
+import { useTheme } from "../context/ThemeContext";
 
 export default function Navbar() {
   const { user, signOut } = useRecipes();
   const pathname = usePathname();
+  const { theme, toggle } = useTheme();
   const links = [
     { href: "/generate", label: "Create Recipe" },
     { href: "/community", label: "Community" },
@@ -55,6 +57,14 @@ export default function Navbar() {
           </ul>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={toggle}
+              aria-label="Toggle theme"
+              className="relative group text-[12px] font-medium px-3 py-2 rounded-xl bg-[linear-gradient(120deg,rgba(255,255,255,0.08),rgba(255,255,255,0.04))] border border-white/15 text-white hover:bg-white/10 transition"
+              title={theme === "dark" ? "Switch to light" : "Switch to dark"}
+            >
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
             {user ? (
               <button
                 onClick={signOut}

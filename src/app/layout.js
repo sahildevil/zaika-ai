@@ -4,6 +4,7 @@ import { RecipeProvider } from "../context/RecipeContext";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import BackgroundFX from "../components/BackgroundFX";
+import { ThemeProvider } from "../context/ThemeContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,18 +23,20 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col relative`}
       >
         <BackgroundFX />
-        <RecipeProvider>
-          <Navbar />
-          <main className="flex-1 w-full max-w-7xl mx-auto px-5 sm:px-8 py-10 animate-fade-up">
-            {children}
-          </main>
-          <Footer />
-        </RecipeProvider>
+        <ThemeProvider>
+          <RecipeProvider>
+            <Navbar />
+            <main className="flex-1 w-full max-w-7xl mx-auto px-5 sm:px-8 py-10 animate-fade-up">
+              {children}
+            </main>
+            <Footer />
+          </RecipeProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
