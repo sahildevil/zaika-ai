@@ -4,6 +4,7 @@ import TagFilter from "../../components/TagFilter";
 import RecipeCard from "../../components/RecipeCard";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
+import { supabase } from "../../lib/supabaseClient";
 import RecipeModal from "../../components/RecipeModal";
 
 export default function CommunityPage() {
@@ -20,12 +21,32 @@ function CommunityPageContent() {
   const tagQuery = params.get("tags");
   const didInit = useRef(false);
   const [activeRecipe, setActiveRecipe] = useState(null);
+  const [dbRecipes, setDbRecipes] = useState([]);
 
   useEffect(() => {
     if (didInit.current) return;
     didInit.current = true;
     if (tagQuery) tagQuery.split(",").forEach((t) => toggleTag(t));
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load community feed from Supabase (public read)
+  useEffect(() => {
+    let on = true;
+    async function load() {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch("/api/recipes", { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!on) return;
+      if (res.ok) {
+        const json = await res.json();
+        setDbRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+      } else {
+        setDbRecipes([]);
+      }
+    }
+    load();
+    return () => { on = false; };
   }, []);
 
   return (
@@ -40,10 +61,21 @@ function CommunityPageContent() {
       </div>
       <TagFilter />
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {dbRecipes.map((r) => (
+          <RecipeCard key={r.id} recipe={{
+            id: r.id,
+            title: r.title,
+            image: r.image || undefined,
+            tags: r.tags || [],
+            steps: r.steps || [],
+            nutrition: r.nutrition || null,
+            calories: r.calories || null,
+          }} onView={() => setActiveRecipe(r)} />
+        ))}
         {communityRecipes.map((r) => (
           <RecipeCard key={r.id} recipe={r} onView={() => setActiveRecipe(r)} />
         ))}
-        {communityRecipes.length === 0 && (
+        {dbRecipes.length === 0 && communityRecipes.length === 0 && (
           <div className="text-sm text-white/60">
             <p>No recipes match selected tags.</p>
             <p className="mt-1 text-white/45">Try clearing some filters.</p>

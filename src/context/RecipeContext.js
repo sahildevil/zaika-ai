@@ -7,6 +7,7 @@ import {
   useEffect,
   useMemo,
 } from "react";
+import { supabase } from "../lib/supabaseClient";
 
 /*
   RecipeContext provides temporary in-memory state for:
@@ -52,24 +53,41 @@ export function RecipeProvider({ children }) {
     servings: 1,
   });
 
-  // Hydrate from localStorage
+  // Initialize from Supabase session, then hydrate local fallback state
   useEffect(() => {
+    // Supabase session
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      const s = data?.session;
+      if (s?.user) {
+        setUser({ id: s.user.id, name: s.user.user_metadata?.name || s.user.email, email: s.user.email });
+      }
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser({ id: session.user.id, name: session.user.user_metadata?.name || session.user.email, email: session.user.email });
+      } else {
+        setUser(null);
+      }
+    });
+    // Local fallback
     try {
       const raw = localStorage.getItem("zaika-state");
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (parsed.user !== undefined) setUser(parsed.user);
-      if (Array.isArray(parsed.savedRecipes))
-        setSavedRecipes(parsed.savedRecipes);
-      if (Array.isArray(parsed.communityRecipes))
-        setCommunityRecipes((prev) => {
-          // Merge by id to keep seed items while allowing user-created additions
-          const byId = new Map(
-            [...prev, ...parsed.communityRecipes].map((r) => [r.id, r])
-          );
-          return Array.from(byId.values());
-        });
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.savedRecipes)) setSavedRecipes(parsed.savedRecipes);
+        if (Array.isArray(parsed.communityRecipes))
+          setCommunityRecipes((prev) => {
+            const byId = new Map([...prev, ...parsed.communityRecipes].map((r) => [r.id, r]));
+            return Array.from(byId.values());
+          });
+      }
     } catch {}
+    return () => {
+      mounted = false;
+      sub?.subscription?.unsubscribe?.();
+    };
   }, []);
 
   // Persist to localStorage (throttled by React batching)
@@ -85,58 +103,48 @@ export function RecipeProvider({ children }) {
     } catch {}
   }, [user, savedRecipes, communityRecipes, preferences]);
 
-  // Hardcoded demo users
-  const demoUsers = useMemo(
-    () => [
-      {
-        id: "u1",
-        name: "Demo User",
-        email: "demo@zaika.ai",
-        password: "zaika123",
-      },
-      {
-        id: "u2",
-        name: "Chef Asha",
-        email: "asha@zaika.ai",
-        password: "tastebud",
-      },
-    ],
-    []
-  );
-
-  const signIn = useCallback(
-    (email) => {
-      // Backward compatibility if only email is provided (older UI)
-      if (typeof email === "string") {
-        const match = demoUsers.find(
-          (u) => u.email.toLowerCase() === email.toLowerCase()
-        );
-        if (match) {
-          setUser({ id: match.id, name: match.name, email: match.email });
-          return true;
-        }
-        setUser({ id: "u1", name: "Demo User", email });
-        return true;
-      }
-      // If called with object { email, password }
-      const creds = email;
-      const match = demoUsers.find(
-        (u) =>
-          u.email.toLowerCase() === String(creds?.email || "").toLowerCase() &&
-          u.password === creds?.password
-      );
-      if (match) {
-        setUser({ id: match.id, name: match.name, email: match.email });
-        return true;
-      }
-      return false;
-    },
-    [demoUsers]
-  );
-  const signUp = useCallback((name, email) => {
-    setUser({ id: Date.now().toString(), name, email });
+  // Auth via Supabase
+  const signIn = useCallback(async (arg) => {
+    if (typeof arg === "string") {
+      // Magic link sign-in if only email is provided
+      const { error } = await supabase.auth.signInWithOtp({ email: arg, options: { emailRedirectTo: window.location.origin } });
+      if (error) return false;
+      return true;
+    }
+    const { email, password } = arg || {};
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return false;
+    const u = data.user;
+    setUser({ id: u.id, name: u.user_metadata?.name || u.email, email: u.email });
+    // Ensure profile row exists now that we have a session
+    try {
+      await supabase.from("profiles").upsert({ id: u.id, name: u.user_metadata?.name || u.email, email: u.email });
+    } catch {}
+    return true;
   }, []);
-  const signOut = useCallback(() => setUser(null), []);
+
+  const signUp = useCallback(async (name, email, password) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password: password || Math.random().toString(36).slice(2, 10),
+      options: { data: { name } },
+    });
+    if (error) throw error;
+    const u = data.user;
+    // Create/update profile row for the user
+    if (u) {
+      try {
+        await supabase.from("profiles").upsert({ id: u.id, name: name || u.email, email: u.email });
+      } catch {}
+    }
+    // Do not set local user here; require explicit sign-in as requested
+    return true;
+  }, []);
+
+  const signOut = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  }, []);
   const updateProfile = useCallback((name, email) => {
     setUser((u) =>
       u ? { ...u, name: name ?? u.name, email: email ?? u.email } : u
@@ -175,6 +183,22 @@ export function RecipeProvider({ children }) {
         }
         return Array.from(byId.values());
       });
+      // Persist to Supabase if signed in
+      try {
+        if (user?.id && dishes.length) {
+          const payload = dishes.map((d) => ({
+            title: d.title,
+            image: d.image || d.fallbackImage || null,
+            tags: d.tags || buildTags(form),
+            ingredients: d.ingredients || [],
+            steps: d.steps || [],
+            nutrition: d.nutrition || null,
+            calories: d?.nutrition?.calories || d?.calories || null,
+            user_id: user.id,
+          }));
+          await supabase.from("recipes").insert(payload);
+        }
+      } catch {}
       return dishes;
     },
     [user]
