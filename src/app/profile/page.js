@@ -2,7 +2,8 @@
 import { useRecipes } from "../../context/RecipeContext";
 import RecipeCard from "../../components/RecipeCard";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { supabase } from "../../lib/supabaseClient";
 
 export default function ProfilePage() {
   const { user, savedRecipes, updateProfile, signOut, preferences, updatePreferences } = useRecipes();
@@ -11,6 +12,32 @@ export default function ProfilePage() {
   const [email, setEmail] = useState(user?.email || "");
   const [spice, setSpice] = useState(preferences?.spice || "Medium");
   const [servings, setServings] = useState(preferences?.servings || 1);
+  const [createdRecipes, setCreatedRecipes] = useState([]);
+
+  // Sync local form state when user changes (fixes empty fields on refresh)
+  useEffect(() => {
+    setName(user?.name || "");
+    setEmail(user?.email || "");
+  }, [user?.name, user?.email]);
+
+  useEffect(() => {
+    let active = true;
+    async function load() {
+      if (!user?.id) { setCreatedRecipes([]); return; }
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(`/api/recipes?userId=${user.id}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!active) return;
+      if (res.ok) {
+        const json = await res.json();
+        setCreatedRecipes(Array.isArray(json.recipes) ? json.recipes : []);
+      }
+    }
+    load();
+    return () => { active = false; };
+  }, [user?.id]);
   if (!user)
     return (
       <div className="space-y-4">
@@ -76,6 +103,25 @@ export default function ProfilePage() {
             No saved recipes yet. Generate one!
           </p>
         )}
+      </div>
+      <div className="space-y-3">
+        <h3 className="text-lg font-semibold text-white/90">Your Created Recipes</h3>
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {createdRecipes.map((r) => (
+            <RecipeCard key={r.id} recipe={{
+              id: r.id,
+              title: r.title,
+              image: r.image || undefined,
+              tags: r.tags || [],
+              steps: r.steps || [],
+              nutrition: r.nutrition || null,
+              calories: r.calories || null,
+            }} />
+          ))}
+          {createdRecipes.length === 0 && (
+            <p className="text-sm text-neutral-500">No created recipes yet.</p>
+          )}
+        </div>
       </div>
     </div>
   );

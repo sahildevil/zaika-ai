@@ -234,19 +234,65 @@ Output STRICTLY valid JSON for { "dishes": [ ...3 items... ] } with no extra tex
       });
       return NextResponse.json({ dishes: withImages, source: "mock" });
     }
-    let parsed;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      // try to extract JSON block
-      const match = text.match(/\{[\s\S]*\}/);
-      parsed = match ? JSON.parse(match[0]) : null;
+    // Robust JSON parsing with multiple strategies
+    function tryParse(str) {
+      try { return JSON.parse(str); } catch { return null; }
     }
+    function stripCodeFences(str) {
+      return str.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "");
+    }
+    function extractCodeFence(str) {
+      const fence = str.match(/```json\s*[\s\S]*?```/i) || str.match(/```\s*[\s\S]*?```/i);
+      return fence ? fence[0] : null;
+    }
+    function extractCurlyBlock(str) {
+      const start = str.indexOf("{");
+      const end = str.lastIndexOf("}");
+      if (start === -1 || end === -1 || end <= start) return null;
+      return str.slice(start, end + 1);
+    }
+    function removeDanglingCommas(str) {
+      // remove trailing commas before } or ]
+      return str.replace(/,(\s*[}\]])/g, "$1");
+    }
+
+    let parsed = null;
+    // 1) direct
+    parsed = parsed || tryParse(text);
+    // 2) code fence
+    if (!parsed) {
+      const fence = extractCodeFence(text);
+      if (fence) parsed = tryParse(stripCodeFences(fence));
+    }
+    // 3) balanced curly slice
+    if (!parsed) {
+      const block = extractCurlyBlock(text);
+      if (block) parsed = tryParse(block) || tryParse(removeDanglingCommas(block));
+    }
+    // 4) final sanitization attempt
+    if (!parsed) parsed = tryParse(removeDanglingCommas(text));
+
     if (!parsed || !Array.isArray(parsed.dishes)) {
-      return NextResponse.json(
-        { error: "Model response parse error", raw: text },
-        { status: 502 }
-      );
+      // Fall back to mock instead of 500, include raw for debugging
+      const mocked = mockDishes({
+        diet,
+        mealType,
+        fasting,
+        spiceLevel,
+        servings,
+        calorieTarget,
+        ingredients,
+      });
+      const withImages = mocked.dishes.map((d) => {
+        const q = (
+          d.imagePrompt ||
+          `${d.title}, high quality food photography, studio lighting, 16:9`
+        ).trim();
+        const pollinations = `https://image.pollinations.ai/prompt/${encodeURIComponent(q)}?aspect=16:9&nologo=true`;
+        const fallback = `https://picsum.photos/seed/${encodeURIComponent(d.title)}/800/450`;
+        return { ...d, image: pollinations, fallbackImage: fallback, createdAt: new Date().toISOString(), _source: "fallback-parse" };
+      });
+      return NextResponse.json({ dishes: withImages, source: "gemini-fallback", raw: text });
     }
 
     // Image generation via external image service using Gemini-created prompt

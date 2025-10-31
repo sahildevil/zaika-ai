@@ -8,27 +8,35 @@ export default function SignUpPage() {
   const { signUp } = useRecipes();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const router = useRouter();
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
     setError("");
     if (!name) {
       setError("Please enter your name");
       return;
     }
-    if (!email) {
-      setError("Please enter your email");
+    // Minimal validation: must contain one @ and one .
+    const basicEmail = /.+@.+\..+/;
+    if (!basicEmail.test(email)) {
+      setError("Enter a valid email (must include @ and .)");
       return;
     }
-    signUp(name, email);
-    router.push("/profile");
+    try {
+      await signUp(name, email, password);
+      // Redirect to sign-in after signup as requested
+      router.push("/auth/signin");
+    } catch (err) {
+      setError(err?.message || "Sign up failed");
+    }
   }
   return (
     <div className="max-w-sm mx-auto space-y-6">
       <div className="space-y-2 text-center">
         <h1 className="text-2xl font-semibold text-white/95">Create Account</h1>
-        <p className="text-xs text-white/50">Local demo signup</p>
+        <p className="text-xs text-white/50">Create account (Supabase)</p>
       </div>
       <form
         onSubmit={submit}
@@ -43,6 +51,18 @@ export default function SignUpPage() {
             onChange={(e) => setName(e.target.value)}
             className="w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
             placeholder="Your Name"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-white/60">
+            Password
+          </label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
+            placeholder="••••••••"
           />
         </div>
         <div className="space-y-1">

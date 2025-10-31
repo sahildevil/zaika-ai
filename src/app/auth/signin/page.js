@@ -10,14 +10,14 @@ export default function SignInPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const router = useRouter();
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
     setError("");
     if (!email) {
       setError("Please enter your email");
       return;
     }
-    const ok = password ? signIn({ email, password }) : signIn(email);
+    const ok = await (password ? signIn({ email, password }) : signIn(email));
     if (!ok) {
       setError("Invalid credentials. Try demo: demo@zaika.ai / zaika123");
       return;
@@ -28,7 +28,7 @@ export default function SignInPage() {
     <div className="max-w-sm mx-auto space-y-6">
       <div className="space-y-2 text-center">
         <h1 className="text-2xl font-semibold text-white/95">Sign In</h1>
-        <p className="text-xs text-white/50">Local demo auth</p>
+        <p className="text-xs text-white/50">Sign in with Supabase</p>
       </div>
       <form
         onSubmit={submit}
