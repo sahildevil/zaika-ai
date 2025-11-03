@@ -47,6 +47,7 @@ function GeneratePageContent() {
   const [loading, setLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   const canSubmit = useMemo(
     () => ingredients.length >= 3 && !loading && !isPending,
@@ -55,12 +56,16 @@ function GeneratePageContent() {
 
   function onSubmit(e) {
     e.preventDefault();
-    if (ingredients.length < 3) return alert("Select at least 3 ingredients");
+    if (ingredients.length < 3) {
+      setError("Select at least 3 ingredients");
+      return;
+    }
     setError("");
+    setSuccessMessage("");
     setLoading(true);
     startTransition(async () => {
       try {
-        await generateRecipe({
+        const dishes = await generateRecipe({
           diet,
           mealType,
           calorieRange,
@@ -70,8 +75,13 @@ function GeneratePageContent() {
           servings,
           spiceLevel,
         });
+        setSuccessMessage(
+          `Successfully generated ${dishes.length} recipe${
+            dishes.length > 1 ? "s" : ""
+          }!`
+        );
       } catch (e) {
-        setError(e?.message || "Failed to generate");
+        setError(e?.message || "Failed to generate recipe. Please try again.");
       } finally {
         setLoading(false);
       }
@@ -80,9 +90,15 @@ function GeneratePageContent() {
 
   return (
     <div className="space-y-8">
-      <h2 className="text-2xl font-semibold tracking-tight text-white/90">
-        AI Recipe Generator
-      </h2>
+      <div className="space-y-2">
+        <h2 className="text-2xl font-semibold tracking-tight text-white/90">
+          AI Recipe Generator
+        </h2>
+        <p className="text-sm text-white/55">
+          Customize your preferences and generate personalized recipes.
+        </p>
+      </div>
+
       <form
         onSubmit={onSubmit}
         className="space-y-6 glass p-6 rounded-2xl border border-white/10"
@@ -205,10 +221,23 @@ function GeneratePageContent() {
             fasting={fasting}
           />
         </div>
+
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+            {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-300 text-sm">
+            {successMessage}
+          </div>
+        )}
+
         <button
           disabled={!canSubmit}
           type="submit"
-          className="relative group rounded-xl px-5 py-2.5 text-sm font-medium text-white bg-[linear-gradient(120deg,rgba(var(--accent-rgb)/0.25),rgba(var(--accent-rgb)/0.1))] border border-[rgba(var(--accent-rgb)/0.5)] hover:bg-[linear-gradient(120deg,rgba(var(--accent-rgb)/0.4),rgba(var(--accent-rgb)/0.15))] disabled:opacity-50"
+          className="relative group rounded-xl px-5 py-2.5 text-sm font-medium text-white bg-[linear-gradient(120deg,rgba(var(--accent-rgb)/0.25),rgba(var(--accent-rgb)/0.1))] border border-[rgba(var(--accent-rgb)/0.5)] hover:bg-[linear-gradient(120deg,rgba(var(--accent-rgb)/0.4),rgba(var(--accent-rgb)/0.15))] disabled:opacity-50 disabled:cursor-not-allowed transition"
         >
           <span className="relative z-10">
             {loading || isPending ? "Generating..." : "Generate Recipe"}
@@ -217,12 +246,25 @@ function GeneratePageContent() {
         </button>
       </form>
 
-      {loading && <LoadingSpinner />}
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {loading && <LoadingSpinner text="Cooking up something delicious..." />}
 
       {generatedBatch?.length > 0 && !loading && (
         <div className="space-y-4">
-          <h3 className="font-semibold text-white/85">AI Suggestions</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-white/85">
+              AI Suggestions ({generatedBatch.length})
+            </h3>
+            {user && (
+              <button
+                onClick={() =>
+                  generatedBatch.forEach((dish) => saveGenerated(dish))
+                }
+                className="text-xs px-3 py-1.5 rounded-lg border border-[rgba(var(--accent-rgb)/0.5)] hover:bg-[rgba(var(--accent-rgb)/0.15)] transition"
+              >
+                Save All
+              </button>
+            )}
+          </div>
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {generatedBatch.map((dish) => (
               <RecipeCard
@@ -234,7 +276,15 @@ function GeneratePageContent() {
             ))}
           </div>
           {!user && (
-            <p className="text-xs text-white/45">Sign in to save dishes.</p>
+            <p className="text-xs text-white/45 text-center">
+              <a
+                href="/auth/signin"
+                className="text-[rgba(var(--accent-rgb)/0.9)] hover:underline"
+              >
+                Sign in
+              </a>{" "}
+              to save your generated recipes.
+            </p>
           )}
         </div>
       )}

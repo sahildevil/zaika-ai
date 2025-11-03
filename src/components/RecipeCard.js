@@ -1,128 +1,203 @@
 "use client";
+import Image from "next/image";
 import { motion } from "framer-motion";
 import { memo, useMemo, useState } from "react";
 import { useRecipes } from "../context/RecipeContext";
-import Image from "next/image";
 
 function RecipeCard({ recipe, onSave, onView }) {
   const { isSaved, toggleSave } = useRecipes();
   const saved = isSaved?.(recipe.id);
   const [imgLoaded, setImgLoaded] = useState(false);
-  const [imgFailed, setImgFailed] = useState(false);
-  const fallbackSrc = useMemo(() => {
-    if (recipe.fallbackImage) return recipe.fallbackImage;
-    const seed = encodeURIComponent(recipe.title || "zaika");
-    return `https://picsum.photos/seed/${seed}/800/450`;
-  }, [recipe.title, recipe.fallbackImage]);
+  const [imgError, setImgError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  const title = recipe?.title || "Dish";
+
+  // Generate a consistent color-based placeholder as primary fallback
+  const hashCode = [...title].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const idx = Math.abs(hashCode) % 7;
+
+  // Use placehold.co with different colors for variety
+  const colors = [
+    { bg: "1a1a2e", fg: "16bfa6" },
+    { bg: "2d1b3d", fg: "e94560" },
+    { bg: "1f4068", fg: "f9c74f" },
+    { bg: "2c3e50", fg: "e67e22" },
+    { bg: "34495e", fg: "3498db" },
+    { bg: "16213e", fg: "f39c12" },
+    { bg: "0f3460", fg: "e43f5a" },
+  ];
+
+  const { bg, fg } = colors[idx];
+  const placeholderUrl = `https://placehold.co/800x450/${bg}/${fg}/png?text=${encodeURIComponent(
+    title.substring(0, 30)
+  )}`;
+
+  // Alternative: Use a food emoji-based placeholder
+  const foodEmojis = ["🍛", "🍲", "🥘", "🍜", "🍝", "🥗", "🍱"];
+  const emojiPlaceholder = `https://placehold.co/800x450/${bg}/${fg}/png?text=${
+    foodEmojis[idx]
+  }+${encodeURIComponent(title.substring(0, 20))}`;
+
+  const imageSources = [
+    recipe?.image,
+    recipe?.imageUrl,
+    recipe?.fallbackImage,
+    placeholderUrl,
+    emojiPlaceholder,
+  ].filter(Boolean);
+
+  const currentSrc =
+    imageSources[Math.min(retryCount, imageSources.length - 1)];
+
+  const handleError = () => {
+    if (retryCount < imageSources.length - 1) {
+      setRetryCount((prev) => prev + 1);
+      setImgError(false);
+    } else {
+      setImgError(true);
+    }
+  };
+
+  const handleLoad = () => {
+    setImgLoaded(true);
+  };
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 14 }}
+    <motion.article
+      initial={{ opacity: 0, y: 8 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.3 }}
-      transition={{ duration: 0.55, ease: "easeOut" }}
-      whileHover={{ y: -6 }}
-      className="relative group rounded-2xl p-5 flex flex-col gap-3 overflow-hidden zaika-card backdrop-blur-md"
+      viewport={{ once: true, amount: 0.25 }}
+      transition={{ duration: 0.4 }}
+      className="rounded-2xl zaika-card overflow-hidden group"
     >
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition duration-500 bg-[radial-gradient(circle_at_80%_-10%,rgba(var(--accent-rgb)/0.25),transparent_65%)]" />
-      <div className="flex items-start justify-between gap-3 relative z-10">
-        <h4 className="font-semibold text-sm md:text-base leading-snug text-white/90 group-hover:text-white transition">
-          {recipe.title}
-        </h4>
-        <div className="flex items-center gap-2">
-          {onView && (
-            <button
-              onClick={onView}
-              className="text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border border-white/15 text-white/80 hover:text-white/95 hover:bg-white/5 transition"
-            >
-              View
-            </button>
-          )}
-          {(onSave || toggleSave) && (
-            <button
-              onClick={() => (onSave ? onSave() : toggleSave?.(recipe.id))}
-              className={`text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border transition ${
-                saved
-                  ? "border-[rgba(var(--accent-rgb)/0.7)] text-white/95 bg-[rgba(var(--accent-rgb)/0.2)]"
-                  : "border-[rgba(var(--accent-rgb)/0.5)] text-white/80 hover:text-white/95 hover:bg-[rgba(var(--accent-rgb)/0.15)]"
-              }`}
-            >
-              {saved ? "Saved" : "Save"}
-            </button>
-          )}
+      <div className="relative aspect-[16/9] bg-white/5">
+        {!imgLoaded && !imgError && (
+          <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-white/10 to-white/5" />
+        )}
+        <Image
+          src={currentSrc}
+          alt={title}
+          fill
+          sizes="(max-width: 768px) 100vw, (max-width: 1280px) 50vw, 33vw"
+          priority={false}
+          onError={handleError}
+          onLoad={handleLoad}
+          className={`object-cover transition-opacity duration-300 ${
+            imgLoaded ? "opacity-100" : "opacity-0"
+          }`}
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+      </div>
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <h4 className="font-semibold text-sm md:text-base leading-snug text-white/90 group-hover:text-white transition line-clamp-2 flex-1">
+            {recipe.title}
+          </h4>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {onView && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onView();
+                }}
+                type="button"
+                aria-label={`View ${title}`}
+                className="text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border border-white/15 text-white/80 hover:text-white/95 hover:bg-white/5 transition cursor-pointer"
+              >
+                View
+              </button>
+            )}
+            {(onSave || toggleSave) && (
+              <button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSave ? onSave() : toggleSave?.(recipe.id);
+                }}
+                type="button"
+                aria-label={saved ? `Unsave ${title}` : `Save ${title}`}
+                className={`text-[10px] uppercase tracking-wide px-2.5 py-1 rounded-full border transition cursor-pointer ${
+                  saved
+                    ? "border-[rgba(var(--accent-rgb)/0.7)] text-white/95 bg-[rgba(var(--accent-rgb)/0.2)]"
+                    : "border-[rgba(var(--accent-rgb)/0.5)] text-white/80 hover:text-white/95 hover:bg-[rgba(var(--accent-rgb)/0.15)]"
+                }`}
+              >
+                {saved ? "Saved" : "Save"}
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-      {recipe.image && (
-        <div className="relative rounded-xl overflow-hidden border border-white/10 aspect-video">
-          {/* Skeleton shimmer while loading */}
-          {!imgLoaded && !imgFailed && (
-            <div className="absolute inset-0 animate-pulse bg-[linear-gradient(120deg,rgba(255,255,255,0.06),rgba(255,255,255,0.02))]" />
-          )}
-          <Image
-            src={imgFailed ? fallbackSrc : recipe.image}
-            alt={recipe.title}
-            fill
-            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-            className="object-cover"
-            priority={false}
-            placeholder="blur"
-            blurDataURL="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADElEQVR42mP8z8DwHwAFKQJ4qf2qngAAAABJRU5ErkJggg=="
-            onLoadingComplete={() => setImgLoaded(true)}
-            onError={() => setImgFailed(true)}
-          />
+
+        {recipe.tags && recipe.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {recipe.tags.slice(0, 4).map((t, i) => (
+              <span
+                key={`${t}-${i}`}
+                className="tag-pill text-[9px] tracking-wide !leading-none"
+              >
+                {t}
+              </span>
+            ))}
+            {recipe.tags.length > 4 && (
+              <span className="tag-pill text-[9px] tracking-wide !leading-none">
+                +{recipe.tags.length - 4}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-2 text-[10px] text-white/55 mb-2">
+          <p>
+            <span className="text-white/40">Cal:</span>{" "}
+            <span className="text-white/80">
+              {recipe?.nutrition?.calories ?? recipe?.calories ?? "—"}
+            </span>
+          </p>
+          <p>
+            <span className="text-white/40">Macros:</span>{" "}
+            <span className="text-white/80">
+              {recipe?.nutrition
+                ? `P${recipe.nutrition.protein} C${recipe.nutrition.carbs} F${recipe.nutrition.fat}`
+                : "—"}
+            </span>
+          </p>
         </div>
-      )}
-      <div className="flex flex-wrap gap-1.5 relative z-10">
-        {recipe.tags?.map((t) => (
-          <span
-            key={t}
-            className="tag-pill text-[9px] tracking-wide !leading-none animate-fade-up"
+
+        {recipe.steps && recipe.steps.length > 0 && (
+          <ul className="text-[11px] text-white/65 list-disc ml-4 space-y-1 marker:text-white/25">
+            {recipe.steps.slice(0, 2).map((s, i) => (
+              <li key={i} className="line-clamp-1">
+                {s}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {recipe.youtube && (
+          <a
+            href={recipe.youtube}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-[rgba(var(--accent-rgb)/0.9)] hover:underline inline-flex items-center gap-1 mt-2"
           >
-            {t}
-          </span>
-        ))}
+            <span>YouTube tutorial</span>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth="2"
+              fill="none"
+              aria-hidden
+            >
+              <path d="M7 17L17 7M8 7h9v9" />
+            </svg>
+          </a>
+        )}
       </div>
-      <div className="grid grid-cols-2 gap-2 text-[10px] text-white/55 relative z-10">
-        <p>
-          Calories:{" "}
-          <span className="text-white/80">
-            {recipe?.nutrition?.calories ?? recipe?.calories}
-          </span>
-        </p>
-        <p>
-          Macros:{" "}
-          <span className="text-white/80">
-            P {recipe.nutrition?.protein} / C {recipe.nutrition?.carbs} / F{" "}
-            {recipe.nutrition?.fat}
-          </span>
-        </p>
-      </div>
-      <ul className="text-[11px] list-disc ml-4 space-y-1 marker:text-white/25 relative z-10 text-white/70">
-        {recipe.steps?.slice(0, 3).map((s, i) => (
-          <li key={i}>{s}</li>
-        ))}
-      </ul>
-      {recipe.youtube && (
-        <a
-          href={recipe.youtube}
-          target="_blank"
-          className="text-[11px] relative z-10 text-[rgba(var(--accent-rgb)/0.9)] hover:underline inline-flex items-center gap-1"
-        >
-          <span>YouTube suggestions</span>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2"
-            fill="none"
-            className="opacity-70 group-hover:translate-x-[2px] transition"
-            aria-hidden
-          >
-            <path d="M7 17L17 7M8 7h9v9" />
-          </svg>
-        </a>
-      )}
-    </motion.div>
+    </motion.article>
   );
 }
 

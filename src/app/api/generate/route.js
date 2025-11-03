@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { createClient } from "@supabase/supabase-js";
 
 // Read Gemini API key from multiple possible env names.
 // Accepted: GEMINI_API_KEY, NEXT_PUBLIC_GEMINI_API_KEY, GEMINI_API
@@ -10,6 +11,76 @@ function getApiKey() {
     process.env.GEMINI_API ||
     null
   );
+}
+
+// Initialize Supabase client
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+/**
+ * Generate and upload recipe image to Supabase Storage
+ * @param {string} imagePrompt - The prompt for image generation
+ * @param {string} dishTitle - The title of the dish (used for fallback and filename)
+ * @returns {Promise<string>} - The public URL of the uploaded image
+ */
+async function generateAndUploadImage(imagePrompt, dishTitle) {
+  try {
+    // Generate image using Pollinations AI
+    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+      imagePrompt
+    )}?aspect=16:9&nologo=true&width=1200&height=675`;
+
+    // Fetch the generated image
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) {
+      throw new Error("Failed to generate image");
+    }
+
+    const imageBuffer = await imageResponse.arrayBuffer();
+    const imageBlob = new Blob([imageBuffer], { type: "image/jpeg" });
+
+    // Create a unique filename
+    const timestamp = Date.now();
+    const sanitizedTitle = dishTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .substring(0, 50);
+    const filename = `${sanitizedTitle}-${timestamp}.jpg`;
+
+    // Upload to Supabase Storage
+    const { data, error } = await supabase.storage
+      .from("recipe-images")
+      .upload(filename, imageBlob, {
+        contentType: "image/jpeg",
+        cacheControl: "3600",
+        upsert: false,
+      });
+
+    if (error) {
+      console.error("Supabase upload error:", error);
+      throw error;
+    }
+
+    // Get public URL
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("recipe-images").getPublicUrl(filename);
+
+    return publicUrl;
+  } catch (error) {
+    console.error("Image generation/upload error:", error);
+    // Return reliable fallback placeholder image
+    const sanitizedTitle = dishTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "+")
+      .substring(0, 30);
+    return `https://placehold.co/1200x675/1a1a2e/16bfa6/png?text=${encodeURIComponent(
+      sanitizedTitle
+    )}`;
+  }
 }
 
 async function callGeminiSDK(prompt, apiKey) {
@@ -88,58 +159,174 @@ function mockDishes({
   if (diet === "Vegan" || diet === "Veg" || diet === "Jain")
     baseTags.push("Plant Based");
   if (calorieTarget <= 350) baseTags.push("Low Calorie");
-  const pick = (i) => ingredients[i % ingredients.length];
-  const mk = (i, title) => ({
-    id: `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${i}`,
-    title,
-    summary: `${mealType} friendly, ${spiceLevel.toLowerCase()} spice, serves ${servings}.`,
-    servings,
-    prepTime: "10 min",
-    cookTime: "20 min",
-    totalTime: "30 min",
-    difficulty: "Easy",
-    utensils: ["Kadhai (wok)", "Spatula", "Measuring cups"],
-    ingredients: [
-      { name: pick(i), quantity: "200 g" },
-      { name: pick(i + 1), quantity: "120 g" },
-      { name: pick(i + 2), quantity: "to taste" },
-    ],
-    steps: [
-      "Rinse and prep all ingredients; chop uniformly for even cooking.",
-      "Heat 1 tbsp ghee/oil in a kadhai on medium heat for 1 minute.",
-      "Add cumin/whole spices; let them crackle for 20–30 seconds.",
-      `Add ${pick(i)} and sauté 2–3 minutes until aromatic.`,
-      `Stir in ${pick(
-        i + 1
-      )}; cook on medium 4–6 minutes, stirring occasionally.`,
-      "Season with salt and spices; sprinkle 1–2 tbsp water if sticking.",
-      `Fold in ${pick(i + 2)}; cook 1–2 minutes to combine.`,
-      "Taste, adjust seasoning, rest 1 minute off heat, and serve warm.",
-    ],
-    nutrition: {
-      calories: calorieTarget,
-      protein: 18 + i,
-      carbs: 45 + i * 2,
-      fat: 12 + i,
-    },
-    allergens: [diet === "Vegan" ? "" : "Dairy"].filter(Boolean),
-    tips: [
-      "Cut evenly to avoid under/overcooking.",
-      "Add a squeeze of lemon before serving for brightness.",
-    ],
-    variations: [
-      "Swap ghee for oil to keep it vegan.",
-      "Add roasted peanuts for crunch if not fasting.",
-    ],
-    tags: [...baseTags, diet, mealType],
-    imagePrompt: `${title}, Indian ${mealType}, plated, soft studio lighting, appetizing, 16:9`,
+
+  const safePick = (i) => ingredients[Math.abs(i) % ingredients.length];
+  const asQty = (name, i) => ({
+    name,
+    quantity: i % 3 === 0 ? "to taste" : i % 3 === 1 ? "1 cup" : "200 g",
   });
+
+  // Generate unique, recipe-specific steps for each dish
+  const makeSteps = (idx, title, ingredients) => {
+    const hot = spiceLevel === "Hot";
+    const mild = spiceLevel === "Mild";
+    const heat = hot ? "medium-high" : mild ? "low-medium" : "medium";
+
+    // Get specific ingredients for this recipe
+    const ing1 = ingredients[0]?.name || "ingredients";
+    const ing2 = ingredients[1]?.name || "spices";
+    const ing3 = ingredients[2]?.name || "vegetables";
+
+    // Create recipe-specific steps based on meal type and ingredients
+    const prepTime = 5 + idx * 2;
+    const cookTime1 = 3 + idx;
+    const cookTime2 = 5 + idx * 2;
+    const cookTime3 = 4 + idx;
+
+    const oil = fasting ? "ghee" : "oil";
+    const spiceVariation = hot
+      ? "red chili powder and garam masala"
+      : mild
+      ? "turmeric and coriander powder"
+      : "cumin powder and mixed spices";
+
+    // Different cooking methods based on index
+    const cookingMethods = [
+      {
+        method: "sauté and simmer",
+        steps: [
+          `Prepare all ingredients: wash and finely chop ${ing1}, ${ing2}, and ${ing3}. This should take about ${prepTime} minutes.`,
+          `Heat 2 tablespoons of ${oil} in a heavy-bottomed kadhai or pan over ${heat} heat for 1-2 minutes.`,
+          `Add cumin seeds and let them splutter for 30 seconds. If using whole spices, add them now and bloom until aromatic.`,
+          `Add finely chopped onions ${
+            fasting ? "(or skip for fasting)" : ""
+          } and sauté for ${cookTime1} minutes until translucent and golden.`,
+          `Stir in ${ing1} and cook for ${cookTime2} minutes, stirring occasionally to prevent sticking. Add a splash of water if needed.`,
+          `Add ${ing2} and ${spiceVariation}. Mix well and cook for ${cookTime3} minutes on ${heat} heat until well combined.`,
+          `Finally fold in ${ing3}, season with salt to taste, and cook for 2-3 minutes. The consistency should be thick and well-blended.`,
+          `Garnish with fresh coriander leaves and a squeeze of lemon juice. Let it rest for 2 minutes before serving.`,
+        ],
+      },
+      {
+        method: "stir-fry style",
+        steps: [
+          `Begin by prepping your ingredients: dice ${ing1} into small cubes, julienne ${ing2}, and roughly chop ${ing3}. Takes approximately ${prepTime} minutes.`,
+          `Preheat a wok or large kadhai with 2 tablespoons ${oil} on high heat for 2 minutes until shimmering.`,
+          `Toss in mustard seeds and curry leaves, letting them crackle and release their aroma for about 20 seconds.`,
+          `Quickly add ${ing1} and stir-fry on high heat for ${cookTime1} minutes, keeping ingredients moving to avoid burning.`,
+          `Lower heat to medium, add ${ing2} along with ${spiceVariation}, and toss everything together for ${cookTime2} minutes.`,
+          `Incorporate ${ing3} and continue stir-frying for another ${cookTime3} minutes. Add salt and adjust ${spiceLevel.toLowerCase()} level to preference.`,
+          `For finishing touch, add a teaspoon of ${
+            fasting ? "ghee" : "sesame oil"
+          } and mix well for 1 minute.`,
+          `Transfer to serving dish, garnish with roasted peanuts ${
+            fasting ? "(if allowed)" : ""
+          } and fresh herbs. Serve hot.`,
+        ],
+      },
+      {
+        method: "slow cook method",
+        steps: [
+          `Start with ingredient prep: soak ${ing1} if needed, finely mince ${ing2}, and cut ${ing3} into medium pieces. Prep time: ${prepTime} minutes.`,
+          `In a thick-bottomed pot, heat 2 tablespoons of ${oil} over medium heat for about 90 seconds.`,
+          `Add asafoetida (hing) ${
+            fasting ? "for fasting flavor" : ""
+          } followed by ginger-garlic paste ${
+            fasting ? "(skip for fasting)" : ""
+          }. Sauté for 1 minute.`,
+          `Add ${ing1} and cook gently for ${cookTime1} minutes, stirring occasionally to coat with aromatic base.`,
+          `Mix in ${ing2}, ${spiceVariation}, and a pinch of turmeric. Cook on low-medium heat for ${cookTime2} minutes, letting flavors meld.`,
+          `Add ${ing3} along with 1/2 cup water, cover partially, and simmer for ${
+            cookTime3 + 3
+          } minutes until tender and cooked through.`,
+          `Uncover, increase heat slightly, and reduce any excess liquid for 2-3 minutes while stirring. Season with salt.`,
+          `Finish with a tadka of ${oil} infused with dried red chilies ${
+            hot ? "(extra for heat)" : ""
+          }. Rest 3 minutes and serve warm.`,
+        ],
+      },
+    ];
+
+    return cookingMethods[idx % 3].steps;
+  };
+
+  const mk = (i, title) => {
+    const recipeIngredients = [
+      asQty(safePick(i), i),
+      asQty(safePick(i + 1), i + 1),
+      asQty(safePick(i + 2), i + 2),
+    ];
+
+    return {
+      id: `${title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")}-${Date.now().toString(36)}-${i}`,
+      title,
+      summary: `A delicious ${mealType.toLowerCase()} dish featuring ${safePick(
+        i
+      )}, ${safePick(i + 1)}, and ${safePick(
+        i + 2
+      )}. ${spiceLevel} spice level, serves ${servings}.`,
+      servings,
+      prepTime: `${8 + i * 2} min`,
+      cookTime: `${14 + i * 3} min`,
+      totalTime: `${22 + i * 5} min`,
+      difficulty: i % 3 === 0 ? "Easy" : i % 3 === 1 ? "Medium" : "Easy",
+      utensils:
+        i % 3 === 0
+          ? ["Kadhai (wok)", "Spatula", "Measuring cups"]
+          : i % 3 === 1
+          ? ["Large pan", "Wooden spoon", "Chopping board"]
+          : ["Heavy-bottomed pot", "Ladle", "Mixing bowl"],
+      ingredients: recipeIngredients,
+      steps: makeSteps(i, title, recipeIngredients),
+      nutrition: {
+        calories: calorieTarget + i * 10,
+        protein: 12 + i * 3,
+        carbs: 40 + i * 5,
+        fat: 10 + i * 2,
+      },
+      allergens: [diet === "Vegan" ? "" : "Dairy"].filter(Boolean),
+      tips: [
+        `For ${title}, ensure all ingredients are fresh for best flavor.`,
+        `Adjust ${spiceLevel.toLowerCase()} spice level by varying the amount of chili powder used.`,
+        `This dish pairs wonderfully with ${
+          mealType === "Breakfast"
+            ? "masala chai"
+            : mealType === "Lunch"
+            ? "rice or roti"
+            : mealType === "Dinner"
+            ? "naan or quinoa"
+            : "mint chutney"
+        }.`,
+      ],
+      variations: [
+        `Make it ${
+          diet === "Vegan" ? "gluten-free" : "vegan"
+        } by substituting ${
+          diet === "Vegan"
+            ? "regular flour with chickpea flour"
+            : "ghee with coconut oil"
+        }.`,
+        fasting
+          ? `For regular version, add garlic and onions for enhanced flavor.`
+          : `For fasting version, skip onions and garlic, use rock salt instead.`,
+        `Add ${
+          i % 2 === 0 ? "roasted cashews" : "fried curry leaves"
+        } on top for extra richness.`,
+      ],
+      tags: [...baseTags, diet, mealType],
+      imagePrompt: `${title}, authentic Indian ${mealType}, beautifully plated on traditional serveware, garnished, professional food photography, soft natural lighting, appetizing, 16:9`,
+    };
+  };
+
   const names = [
-    `${fasting ? "Fasting " : ""}${diet} ${mealType} Bowl`,
-    `${diet} Spiced ${pick(0)} Medley`,
-    `${mealType} ${pick(1)} & ${pick(2)} Delight`,
+    `${fasting ? "Fasting " : ""}${diet} ${safePick(0)} ${mealType} Bowl`,
+    `Spiced ${safePick(1)} with ${safePick(2)} Medley`,
+    `${mealType} Special: ${safePick(0)} & ${safePick(1)} Delight`,
   ];
-  return { dishes: names.map((n, i) => mk(i + 1, n)) };
+
+  return { dishes: names.map((n, i) => mk(i, n)) };
 }
 
 export async function POST(request) {
@@ -174,22 +361,82 @@ export async function POST(request) {
         ? 500
         : 750;
 
-    const prompt = `You are an expert Indian chef AI. Propose exactly THREE distinct dish ideas as JSON array named dishes.
-Each dish object MUST include the following fields, with rich and practical cooking guidance:
-- id (short slug), title, summary (1-2 lines)
-- servings, prepTime (e.g., "10 min"), cookTime (e.g., "20 min"), totalTime
-- difficulty (Easy/Medium/Hard)
-- utensils (array of cookware names)
-- ingredients (array of { name, quantity })
-- steps (7-10 clear, numbered, imperative steps; include timing cues like "sauté 2–3 min", heat level, and consistency cues)
-- nutrition { calories, protein, carbs, fat }
-- allergens (array if any), tips (array), variations (array)
-- tags (array) and imagePrompt (concise prompt for photorealistic food photography)
-Constraints to respect strictly:
-Diet=${diet} (allow meat/eggs for Non-Veg), MealType=${mealType}, Fasting=${fasting} (avoid onion, garlic, meat), Spice=${spiceLevel}, Servings=${servings}, CalorieTarget≈${calorieTarget}, AvailableIngredients=${ingredients.join(
-      ", "
-    )}. 
-Output STRICTLY valid JSON for { "dishes": [ ...3 items... ] } with no extra text.`;
+    const prompt = `You are an expert Indian chef AI specializing in authentic Indian cuisine. Propose exactly THREE completely DISTINCT and UNIQUE dish ideas as a JSON array named "dishes".
+
+CRITICAL REQUIREMENTS:
+1. Each dish MUST be completely different from the others
+2. Each dish MUST have its own UNIQUE cooking steps tailored specifically to that dish
+3. Steps MUST be detailed, specific, and practical - NOT generic templates
+4. Each step should include timing, temperatures, and specific techniques for THAT PARTICULAR DISH
+
+Each dish object MUST include ALL of the following fields:
+
+BASIC INFO:
+- id: short slug (e.g., "paneer-tikka-masala-xyz")
+- title: Authentic Indian dish name
+- summary: 2-3 sentences describing the dish's flavor profile and uniqueness
+
+COOKING DETAILS:
+- servings: ${servings}
+- prepTime: realistic prep time (e.g., "15 min")
+- cookTime: realistic cooking time (e.g., "25 min")  
+- totalTime: total time needed
+- difficulty: "Easy", "Medium", or "Hard"
+- utensils: array of specific cookware needed (e.g., ["Kadhai", "Pressure cooker", "Grinding stone"])
+
+INGREDIENTS:
+- ingredients: array of objects with { name: "ingredient name", quantity: "specific amount with units" }
+  * MUST use the available ingredients: ${ingredients.join(", ")}
+  * Add complementary Indian spices and staples as needed
+  * Be specific with quantities (e.g., "2 cups", "1 tsp", "250g")
+
+COOKING STEPS (MOST IMPORTANT - MAKE EACH RECIPE UNIQUE):
+- steps: 8-12 clear, detailed, imperative steps that are SPECIFIC to this exact dish
+  * Step 1: Always start with prep work specific to this dish
+  * Include exact timing for each step (e.g., "sauté for 3-4 minutes until golden")
+  * Specify heat levels (high/medium/low) and when to adjust
+  * Include visual and sensory cues (e.g., "until fragrant", "until mixture thickens", "golden brown")
+  * Mention consistency checks and what to look for
+  * Include resting time if applicable
+  * MAKE SURE EACH DISH HAS DIFFERENT COOKING TECHNIQUES (e.g., one uses tempering, one uses slow cooking, one uses high-heat stir-frying)
+
+NUTRITION & DIETARY:
+- nutrition: { calories: ~${calorieTarget}, protein: "Xg", carbs: "Xg", fat: "Xg" }
+- allergens: array of allergens if any (e.g., ["Dairy", "Nuts"])
+
+EXTRA DETAILS:
+- tips: array of 3-4 helpful cooking tips specific to this dish
+- variations: array of 2-3 variations (e.g., regional, dietary adaptations)
+- tags: array including dietary tags
+- imagePrompt: concise prompt for photorealistic food photography (e.g., "Paneer Tikka Masala in copper kadhai, garnished with cream and coriander, restaurant style, professional food photography, warm lighting")
+
+STRICT CONSTRAINTS:
+- Diet: ${diet} ${
+      diet === "Non-Veg" ? "(can include meat, eggs)" : "(vegetarian only)"
+    }
+- Meal Type: ${mealType}
+- Fasting Mode: ${
+      fasting ? "YES - NO onion, NO garlic, NO meat, use rock salt" : "NO"
+    }
+- Spice Level: ${spiceLevel}
+- Servings: ${servings}
+- Target Calories: approximately ${calorieTarget} per serving
+- Available Ingredients: MUST primarily use ${ingredients.join(", ")}
+
+IMPORTANT: Make each of the THREE dishes completely different:
+- Different cooking methods (e.g., gravy-based, dry sauté, one-pot rice dish)
+- Different flavor profiles (e.g., tangy, creamy, spicy-aromatic)
+- Different textures (e.g., crispy, soft, mixed textures)
+- COMPLETELY different cooking steps - do NOT reuse the same step templates!
+
+Output STRICTLY valid JSON in this exact format with NO additional text:
+{
+  "dishes": [
+    { /* dish 1 with all fields */ },
+    { /* dish 2 with all fields */ },
+    { /* dish 3 with all fields */ }
+  ]
+}`;
 
     let text = null;
     if (apiKey) {
@@ -214,35 +461,42 @@ Output STRICTLY valid JSON for { "dishes": [ ...3 items... ] } with no extra tex
         calorieTarget,
         ingredients,
       });
-      const withImages = mocked.dishes.map((d) => {
-        const q = (
-          d.imagePrompt ||
-          `${d.title}, high quality food photography, studio lighting, 16:9`
-        ).trim();
-        const pollinations = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-          q
-        )}?aspect=16:9&nologo=true`;
-        const fallback = `https://picsum.photos/seed/${encodeURIComponent(
-          d.title
-        )}/800/450`;
-        return {
-          ...d,
-          image: pollinations,
-          fallbackImage: fallback,
-          createdAt: new Date().toISOString(),
-        };
-      });
+
+      // Generate and upload images to Supabase for each dish
+      const withImages = await Promise.all(
+        mocked.dishes.map(async (d) => {
+          const imagePrompt =
+            d.imagePrompt ||
+            `${d.title}, high quality food photography, studio lighting, 16:9`;
+          const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
+
+          return {
+            ...d,
+            image: imageUrl,
+            createdAt: new Date().toISOString(),
+          };
+        })
+      );
+
       return NextResponse.json({ dishes: withImages, source: "mock" });
     }
     // Robust JSON parsing with multiple strategies
     function tryParse(str) {
-      try { return JSON.parse(str); } catch { return null; }
+      try {
+        return JSON.parse(str);
+      } catch {
+        return null;
+      }
     }
     function stripCodeFences(str) {
-      return str.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "");
+      return str
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```\s*$/i, "");
     }
     function extractCodeFence(str) {
-      const fence = str.match(/```json\s*[\s\S]*?```/i) || str.match(/```\s*[\s\S]*?```/i);
+      const fence =
+        str.match(/```json\s*[\s\S]*?```/i) || str.match(/```\s*[\s\S]*?```/i);
       return fence ? fence[0] : null;
     }
     function extractCurlyBlock(str) {
@@ -267,7 +521,8 @@ Output STRICTLY valid JSON for { "dishes": [ ...3 items... ] } with no extra tex
     // 3) balanced curly slice
     if (!parsed) {
       const block = extractCurlyBlock(text);
-      if (block) parsed = tryParse(block) || tryParse(removeDanglingCommas(block));
+      if (block)
+        parsed = tryParse(block) || tryParse(removeDanglingCommas(block));
     }
     // 4) final sanitization attempt
     if (!parsed) parsed = tryParse(removeDanglingCommas(text));
@@ -283,37 +538,46 @@ Output STRICTLY valid JSON for { "dishes": [ ...3 items... ] } with no extra tex
         calorieTarget,
         ingredients,
       });
-      const withImages = mocked.dishes.map((d) => {
-        const q = (
-          d.imagePrompt ||
-          `${d.title}, high quality food photography, studio lighting, 16:9`
-        ).trim();
-        const pollinations = `https://image.pollinations.ai/prompt/${encodeURIComponent(q)}?aspect=16:9&nologo=true`;
-        const fallback = `https://picsum.photos/seed/${encodeURIComponent(d.title)}/800/450`;
-        return { ...d, image: pollinations, fallbackImage: fallback, createdAt: new Date().toISOString(), _source: "fallback-parse" };
+
+      // Generate and upload images to Supabase for each dish
+      const withImages = await Promise.all(
+        mocked.dishes.map(async (d) => {
+          const imagePrompt =
+            d.imagePrompt ||
+            `${d.title}, high quality food photography, studio lighting, 16:9`;
+          const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
+
+          return {
+            ...d,
+            image: imageUrl,
+            createdAt: new Date().toISOString(),
+            _source: "fallback-parse",
+          };
+        })
+      );
+
+      return NextResponse.json({
+        dishes: withImages,
+        source: "gemini-fallback",
+        raw: text,
       });
-      return NextResponse.json({ dishes: withImages, source: "gemini-fallback", raw: text });
     }
 
-    // Image generation via external image service using Gemini-created prompt
-    const withImages = parsed.dishes.map((d) => {
-      const q = (
-        d.imagePrompt ||
-        `${d.title}, high quality food photography, studio lighting, 16:9`
-      ).trim();
-      const pollinations = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-        q
-      )}?aspect=16:9&nologo=true`;
-      const fallback = `https://picsum.photos/seed/${encodeURIComponent(
-        d.title
-      )}/800/450`;
-      return {
-        ...d,
-        image: pollinations,
-        fallbackImage: fallback,
-        createdAt: new Date().toISOString(),
-      };
-    });
+    // Generate and upload images to Supabase for Gemini-generated recipes
+    const withImages = await Promise.all(
+      parsed.dishes.map(async (d) => {
+        const imagePrompt =
+          d.imagePrompt ||
+          `${d.title}, high quality food photography, studio lighting, 16:9`;
+        const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
+
+        return {
+          ...d,
+          image: imageUrl,
+          createdAt: new Date().toISOString(),
+        };
+      })
+    );
 
     return NextResponse.json({ dishes: withImages, source: "gemini" });
   } catch (err) {
