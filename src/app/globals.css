@@ -248,6 +248,7 @@ body::-webkit-scrollbar-thumb:hover {
   );
   opacity: 0;
   transition: 0.5s;
+  pointer-events: none;
 }
 .zaika-card:hover:after {
   opacity: 0.6;

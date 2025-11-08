@@ -4,9 +4,11 @@ const nextConfig = {
     remotePatterns: [
       { protocol: "https", hostname: "image.pollinations.ai" },
       { protocol: "https", hostname: "picsum.photos" },
-      { protocol: "https", hostname: "source.unsplash.com" },
+      { protocol: "https", hostname: "placehold.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
-      { protocol: "https", hostname: "placehold.co" }, // added
+      { protocol: "https", hostname: "source.unsplash.com" },
+      // Add Supabase storage domain when you set it up
+      // { protocol: "https", hostname: "*.supabase.co" },
     ],
   },
 };

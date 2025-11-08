@@ -27,30 +27,105 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey);
  * @returns {Promise<string>} - The public URL of the uploaded image
  */
 async function generateAndUploadImage(imagePrompt, dishTitle) {
-  try {
-    // Generate image using Pollinations AI
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      imagePrompt
-    )}?aspect=16:9&nologo=true&width=1200&height=675`;
+  const sanitizedTitle = dishTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "+")
+    .substring(0, 30);
 
-    // Fetch the generated image
-    const imageResponse = await fetch(imageUrl);
-    if (!imageResponse.ok) {
-      throw new Error("Failed to generate image");
+  // Generate colorful placeholder based on title hash
+  const hashCode = [...dishTitle].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const idx = Math.abs(hashCode) % 7;
+
+  const colors = [
+    { bg: "1a1a2e", fg: "16bfa6" }, // Teal on dark
+    { bg: "2d1b3d", fg: "e94560" }, // Pink on purple
+    { bg: "1f4068", fg: "f9c74f" }, // Yellow on blue
+    { bg: "2c3e50", fg: "e67e22" }, // Orange on dark blue
+    { bg: "34495e", fg: "3498db" }, // Light blue on gray
+    { bg: "16213e", fg: "f39c12" }, // Gold on navy
+    { bg: "0f3460", fg: "e43f5a" }, // Coral on deep blue
+  ];
+
+  const { bg, fg } = colors[idx];
+  const foodEmojis = ["🍛", "🍲", "🥘", "🍜", "🍝", "🥗", "🍱"];
+  const emoji = foodEmojis[idx];
+
+  const placeholderUrl = `https://placehold.co/1200x675/${bg}/${fg}/png?text=${emoji}+${encodeURIComponent(
+    sanitizedTitle
+  )}`;
+
+  try {
+    // Multiple image generation services as fallbacks
+    const imageServices = [
+      {
+        name: "Pollinations AI",
+        url: `https://image.pollinations.ai/prompt/${encodeURIComponent(
+          imagePrompt
+        )}?width=1200&height=675&nologo=true&enhance=true`,
+        timeout: 15000,
+      },
+      {
+        name: "Pollinations Simple",
+        url: `https://image.pollinations.ai/prompt/${encodeURIComponent(
+          dishTitle + " food photography"
+        )}?width=1200&height=675&nologo=true`,
+        timeout: 12000,
+      },
+    ];
+
+    let imageBuffer = null;
+    let successfulService = null;
+
+    // Try each service in order
+    for (const service of imageServices) {
+      try {
+        console.log(`Attempting image generation with ${service.name}...`);
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), service.timeout);
+
+        const imageResponse = await fetch(service.url, {
+          signal: controller.signal,
+          headers: {
+            Accept: "image/*",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+        });
+
+        clearTimeout(timeout);
+
+        if (imageResponse.ok) {
+          imageBuffer = await imageResponse.arrayBuffer();
+          successfulService = service.name;
+          console.log(`✓ Image generated successfully with ${service.name}`);
+          break;
+        } else {
+          console.log(
+            `✗ ${service.name} returned status: ${imageResponse.status}`
+          );
+        }
+      } catch (serviceError) {
+        console.log(`✗ ${service.name} failed:`, serviceError.message);
+        continue; // Try next service
+      }
     }
 
-    const imageBuffer = await imageResponse.arrayBuffer();
-    const imageBlob = new Blob([imageBuffer], { type: "image/jpeg" });
+    // If no service succeeded, return placeholder
+    if (!imageBuffer) {
+      console.log("All image generation services failed, using placeholder");
+      return placeholderUrl;
+    }
 
-    // Create a unique filename
+    // Upload to Supabase Storage
+    const imageBlob = new Blob([imageBuffer], { type: "image/jpeg" });
     const timestamp = Date.now();
-    const sanitizedTitle = dishTitle
+    const sanitizedFilename = dishTitle
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .substring(0, 50);
-    const filename = `${sanitizedTitle}-${timestamp}.jpg`;
+    const filename = `${sanitizedFilename}-${timestamp}.jpg`;
 
-    // Upload to Supabase Storage
     const { data, error } = await supabase.storage
       .from("recipe-images")
       .upload(filename, imageBlob, {
@@ -61,7 +136,8 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
 
     if (error) {
       console.error("Supabase upload error:", error);
-      throw error;
+      // Return the placeholder if upload fails
+      return placeholderUrl;
     }
 
     // Get public URL
@@ -69,17 +145,12 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
       data: { publicUrl },
     } = supabase.storage.from("recipe-images").getPublicUrl(filename);
 
+    console.log(`✓ Image uploaded to Supabase: ${filename}`);
     return publicUrl;
   } catch (error) {
     console.error("Image generation/upload error:", error);
-    // Return reliable fallback placeholder image
-    const sanitizedTitle = dishTitle
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "+")
-      .substring(0, 30);
-    return `https://placehold.co/1200x675/1a1a2e/16bfa6/png?text=${encodeURIComponent(
-      sanitizedTitle
-    )}`;
+    // Always return placeholder on any error
+    return placeholderUrl;
   }
 }
 

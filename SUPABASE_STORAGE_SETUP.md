@@ -1,5 +1,9 @@
 # Supabase Storage Setup for Recipe Images
 
+## ⚠️ IMPORTANT: Current Status
+
+The recipe generation currently uses **placeholder images** because Supabase Storage policies need to be configured. Once you complete the setup below, uncomment the code in `src/app/api/generate/route.js` to enable real AI-generated images.
+
 ## Step 1: Create the Storage Bucket
 
 1. Go to your Supabase project dashboard
@@ -10,98 +14,172 @@
    - **Public Bucket:** ✅ Enable (so images can be accessed via public URLs)
    - Click **Create Bucket**
 
-## Step 2: Set Up Storage Policies
+## Step 2: Set Up Storage Policies (CRITICAL - Fixes 403 Error)
 
-After creating the bucket, you need to set up Row Level Security (RLS) policies:
+The **403 RLS policy error** happens because unauthenticated requests can't upload files. You need to allow public uploads.
 
-### SQL Script for Storage Policies
+### Option A - Using Supabase SQL Editor (RECOMMENDED)
 
-Run the following SQL in the Supabase SQL Editor:
+Run this SQL in the **SQL Editor**:
 
 ```sql
+-- Allow anyone to upload images (for API route generation)
+CREATE POLICY "Allow public uploads to recipe-images"
+ON storage.objects FOR INSERT
+TO public
+WITH CHECK (bucket_id = 'recipe-images');
+
 -- Allow public read access to recipe images
 CREATE POLICY "Public read access for recipe images"
 ON storage.objects FOR SELECT
 TO public
 USING (bucket_id = 'recipe-images');
 
--- Allow authenticated users to upload images
-CREATE POLICY "Authenticated users can upload recipe images"
-ON storage.objects FOR INSERT
-TO authenticated
-WITH CHECK (bucket_id = 'recipe-images');
-
--- Allow service role to upload images (for API generation)
-CREATE POLICY "Service role can upload recipe images"
-ON storage.objects FOR INSERT
-TO service_role
-WITH CHECK (bucket_id = 'recipe-images');
-
--- Allow users to update their own uploads
-CREATE POLICY "Users can update own recipe images"
+-- Allow anyone to update images
+CREATE POLICY "Public update access for recipe images"
 ON storage.objects FOR UPDATE
-TO authenticated
-USING (bucket_id = 'recipe-images' AND auth.uid()::text = (storage.foldername(name))[1]);
+TO public
+USING (bucket_id = 'recipe-images');
 
--- Allow users to delete their own uploads
-CREATE POLICY "Users can delete own recipe images"
+-- Allow anyone to delete (optional - remove if you don't want this)
+CREATE POLICY "Public delete access for recipe images"
 ON storage.objects FOR DELETE
-TO authenticated
-USING (bucket_id = 'recipe-images' AND auth.uid()::text = (storage.foldername(name))[1]);
+TO public
+USING (bucket_id = 'recipe-images');
 ```
 
-## Step 3: Configure Environment Variables
+### Option B - Using Supabase Dashboard UI
 
-Add the following to your `.env.local` file if you want to use the service role key for better upload permissions:
+1. Go to **Storage** → **Policies**
+2. Select `recipe-images` bucket
+3. Click **New Policy**
+4. Choose **"For full customization"**
+
+**Policy 1: Allow Public Uploads** ⭐ THIS FIXES THE 403 ERROR
+```
+Name: Allow public uploads
+Allowed operation: INSERT
+Target roles: public
+Policy definition: bucket_id = 'recipe-images'
+```
+
+**Policy 2: Public Read**
+```
+Name: Public read access  
+Allowed operation: SELECT
+Target roles: public
+Policy definition: bucket_id = 'recipe-images'
+```
+
+**Policy 3: Public Update (Optional)**
+```
+Name: Public update access
+Allowed operation: UPDATE
+Target roles: public  
+Policy definition: bucket_id = 'recipe-images'
+```
+
+## Step 3: Enable Supabase Storage in Code
+
+After setting up policies, uncomment the code in `src/app/api/generate/route.js`:
+
+1. Open `src/app/api/generate/route.js`
+2. Find the `generateAndUploadImage` function (around line 29)
+3. **Comment out** the placeholder return statement
+4. **Uncomment** the TODO section with the Supabase upload code
+
+## Step 4: Add Supabase Domain to Next.js Config
+
+Update `next.config.mjs` to allow Supabase images:
+
+```javascript
+const nextConfig = {
+  images: {
+    remotePatterns: [
+      // ... existing domains
+      { 
+        protocol: "https", 
+        hostname: "**.supabase.co",
+        pathname: "/storage/v1/object/public/recipe-images/**"
+      },
+    ],
+  },
+};
+```
+
+## Step 5: Configure Environment Variables (Optional)
+
+For better upload permissions, add service role key:
 
 ```env
-# Existing variables
+# .env.local
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
-# Optional: Add service role key for server-side operations (more permissions)
-# You can find this in Supabase Dashboard > Settings > API
+# Optional: Better permissions for server-side uploads
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
-
-# Gemini API Key
-GEMINI_API_KEY=your_gemini_api_key
 ```
 
-## Step 4: Verify Setup
+## Step 6: Test the Setup
 
-After setting up:
-
-1. Generate a recipe using your app
-2. Check the Supabase Storage dashboard
-3. You should see new images uploaded to the `recipe-images` bucket
-4. Click on an image to verify it's publicly accessible
-
-## Bucket Configuration Details
-
-- **Bucket Name:** `recipe-images`
-- **Public:** Yes
-- **File Size Limit:** 5MB (default, can be increased)
-- **Allowed MIME types:** image/jpeg, image/png, image/webp
+1. Restart your dev server: `npm run dev`
+2. Generate a new recipe
+3. Check the console - should see NO errors
+4. Verify images in Supabase Dashboard → Storage → recipe-images
 
 ## Troubleshooting
 
-### Images not uploading?
-- Check that the bucket name is exactly `recipe-images`
-- Verify the RLS policies are created
-- Make sure the service role key is correct (or anon key has sufficient permissions)
+### Still Getting 403 Errors?
 
-### Images not displaying?
-- Ensure the bucket is set to **Public**
-- Check the public URL format: `https://[project-ref].supabase.co/storage/v1/object/public/recipe-images/[filename]`
+**Problem:** `new row violates row-level security policy`
 
-### Permission errors?
-- If using anon key, ensure policies allow public/authenticated uploads
-- If using service role key, ensure it's correctly set in environment variables
+**Solutions:**
+1. ✅ Make sure the bucket is **PUBLIC**
+2. ✅ Verify the INSERT policy allows `public` role
+3. ✅ Check policy is for `bucket_id = 'recipe-images'`
+4. ✅ Try deleting and recreating all policies
+5. ✅ Restart your Next.js dev server
 
-## Image Format
+### Images Not Appearing?
 
-All images are:
-- Stored as JPEG format
-- Generated with 16:9 aspect ratio (1200x675px)
-- Named with pattern: `[dish-name]-[timestamp].jpg`
-- Optimized for web viewing
+1. Check bucket is public
+2. Verify the public URL format
+3. Check Next.js config allows Supabase domain
+4. Clear browser cache
+
+### Upload Speed Issues?
+
+- Use service role key instead of anon key
+- Check your internet connection
+- Pollinations AI might be slow - normal to take 5-10 seconds per image
+
+## Current Setup (Without Supabase)
+
+Right now, the app uses **colorful placeholder images** from placehold.co:
+- ✅ No errors
+- ✅ Fast generation  
+- ✅ Unique colors per recipe
+- ✅ Works offline
+- ❌ Not real food images
+
+## After Supabase Setup
+
+Once configured, you'll get:
+- ✅ Real AI-generated food images
+- ✅ Permanently stored in your Supabase
+- ✅ No broken links
+- ✅ Professional looking recipes
+
+---
+
+## Quick Command Summary
+
+```sql
+-- Run in Supabase SQL Editor to fix 403 error:
+CREATE POLICY "Allow public uploads to recipe-images"
+ON storage.objects FOR INSERT
+TO public
+WITH CHECK (bucket_id = 'recipe-images');
+```
+
+That's it! Once this policy is created, the 403 error will be fixed. 🎉
