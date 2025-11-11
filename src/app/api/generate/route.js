@@ -37,6 +37,7 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
 
   const cacheKey = imagePrompt.trim().toLowerCase();
   if (promptCache.has(cacheKey)) {
+    console.log(`[image-gen] cache hit for "${dishTitle}"`);
     return promptCache.get(cacheKey);
   }
 
@@ -51,26 +52,36 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
 
   activeImageGen++;
   try {
-    // Timeout controls how long we wait for Pollinations to stream an image.
-    // Recommended range: 15000 - 30000 ms. Higher = fewer aborts, but longer waits on failure.
-    const timeoutMs = parseInt(process.env.IMAGE_GEN_TIMEOUT || "20000", 10);
-    const attempts = parseInt(process.env.IMAGE_GEN_ATTEMPTS || "2", 10); // keep low to avoid 429
+    // Progressive timeout: increase timeout on each retry to give more time for slow responses
+    const baseTimeout = parseInt(process.env.IMAGE_GEN_TIMEOUT || "25000", 10);
+    const attempts = parseInt(process.env.IMAGE_GEN_ATTEMPTS || "3", 10); // increased to 3 for better success rate
 
     // Use a single size (smaller) to reduce server strain
     const width = 960;
     const height = 540;
     let imageBuffer = null;
+    let lastError = null;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
+      // Progressive timeout: 25s, 35s, 45s
+      const timeoutMs = baseTimeout + (attempt - 1) * 10000;
       const seed = Math.floor(Math.random() * 1_000_000);
       const cb = Date.now();
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
         imagePrompt
       )}?width=${width}&height=${height}&nologo=true&enhance=true&seed=${seed}&cb=${cb}`;
       const controller = new AbortController();
-      const to = setTimeout(() => controller.abort(), timeoutMs);
+      let timedOut = false;
+      const to = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+
+      const startTime = Date.now();
       try {
-        console.log(`[image-gen] attempt ${attempt}/${attempts}`);
+        console.log(
+          `[image-gen] attempt ${attempt}/${attempts} (timeout: ${timeoutMs}ms) for "${dishTitle}"`
+        );
         const res = await fetch(url, {
           signal: controller.signal,
           headers: {
@@ -80,34 +91,109 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
           },
         });
         clearTimeout(to);
+        const elapsed = Date.now() - startTime;
+
         if (res.status === 429) {
           console.log(
-            "[image-gen] received 429 Too Many Requests; aborting further attempts"
+            `[image-gen] received 429 Too Many Requests after ${elapsed}ms; will retry with backoff`
           );
-          break; // stop trying immediately
-        }
-        if (!res.ok) {
-          console.log(`[image-gen] non-ok status ${res.status}`);
+          lastError = "rate_limit";
+          // Don't break immediately, allow retry with backoff
+        } else if (!res.ok) {
+          console.log(
+            `[image-gen] non-ok status ${res.status} after ${elapsed}ms`
+          );
+          lastError = `http_${res.status}`;
         } else {
           const ct = res.headers.get("content-type") || "";
           if (!ct.startsWith("image/")) {
-            console.log(`[image-gen] invalid content-type ${ct}`);
+            console.log(
+              `[image-gen] invalid content-type ${ct} after ${elapsed}ms`
+            );
+            lastError = "invalid_content_type";
           } else {
             imageBuffer = await res.arrayBuffer();
-            console.log(`[image-gen] success on attempt ${attempt}`);
+            console.log(
+              `[image-gen] ✓ success on attempt ${attempt} after ${elapsed}ms (${(
+                imageBuffer.byteLength / 1024
+              ).toFixed(1)}KB)`
+            );
             break;
           }
         }
       } catch (e) {
         clearTimeout(to);
+        const elapsed = Date.now() - startTime;
+        if (e.name === "AbortError") {
+          if (timedOut) {
+            console.log(
+              `[image-gen] attempt ${attempt} timed out after ${timeoutMs}ms for "${dishTitle}"`
+            );
+            lastError = "timeout";
+          } else {
+            console.log(
+              `[image-gen] attempt ${attempt} aborted (non-timeout) after ${elapsed}ms`
+            );
+            lastError = "abort";
+          }
+        } else {
+          console.log(
+            `[image-gen] attempt ${attempt} error: ${e.name} ${e.message} after ${elapsed}ms`
+          );
+          lastError = e.name;
+        }
+      }
+
+      // Exponential backoff before retry (300ms, 800ms, 1500ms)
+      if (!imageBuffer && attempt < attempts) {
+        const backoffMs = 300 * Math.pow(2, attempt - 1) + Math.random() * 200;
         console.log(
-          `[image-gen] attempt ${attempt} error: ${e.name} ${e.message}`
+          `[image-gen] waiting ${Math.round(backoffMs)}ms before retry...`
+        );
+        await new Promise((r) => setTimeout(r, backoffMs));
+      }
+    }
+
+    // If Pollinations failed, try alternative providers
+    if (!imageBuffer) {
+      console.log(
+        `[image-gen] Pollinations failed (${lastError}), trying fallback providers...`
+      );
+
+      // Fallback 1: Try a simpler Pollinations request without enhance
+      try {
+        const simpleUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+          imagePrompt
+        )}?width=960&height=540&nologo=true&seed=${Math.floor(
+          Math.random() * 1000000
+        )}`;
+        const controller = new AbortController();
+        const to = setTimeout(() => controller.abort(), 15000);
+        console.log(`[image-gen] trying simplified Pollinations request...`);
+        const res = await fetch(simpleUrl, {
+          signal: controller.signal,
+          headers: { Accept: "image/*" },
+        });
+        clearTimeout(to);
+        if (res.ok && res.headers.get("content-type")?.startsWith("image/")) {
+          imageBuffer = await res.arrayBuffer();
+          console.log(
+            `[image-gen] ✓ fallback succeeded with simplified Pollinations (${(
+              imageBuffer.byteLength / 1024
+            ).toFixed(1)}KB)`
+          );
+        }
+      } catch (e) {
+        console.log(
+          `[image-gen] simplified Pollinations also failed: ${e.message}`
         );
       }
-      if (!imageBuffer) await new Promise((r) => setTimeout(r, 300));
     }
 
     if (!imageBuffer) {
+      console.log(
+        `[image-gen] all providers failed, using placeholder for "${dishTitle}"`
+      );
       const ph = buildPlaceholder(dishTitle);
       promptCache.set(cacheKey, ph);
       return ph;
