@@ -20,138 +20,169 @@ const supabaseServiceKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-/**
- * Generate and upload recipe image to Supabase Storage
- * @param {string} imagePrompt - The prompt for image generation
- * @param {string} dishTitle - The title of the dish (used for fallback and filename)
- * @returns {Promise<string>} - The public URL of the uploaded image
- */
+//
+// Simple in-memory counters / cache (per server instance)
+const IMAGE_GEN_QUEUE_LIMIT = parseInt(
+  process.env.IMAGE_GEN_QUEUE_LIMIT || "2",
+  10
+);
+let activeImageGen = 0;
+const promptCache = new Map(); // key -> url
+// Batch mode: generate only ONE image per group of dishes (reduces external requests & 429s)
+const BATCH_MODE = process.env.IMAGE_GEN_BATCH_MODE === "true";
+
 async function generateAndUploadImage(imagePrompt, dishTitle) {
-  const sanitizedTitle = dishTitle
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "+")
-    .substring(0, 30);
+  if (process.env.POLLINATIONS_ENABLED === "false")
+    return buildPlaceholder(dishTitle);
 
-  // Generate colorful placeholder based on title hash
-  const hashCode = [...dishTitle].reduce((a, c) => a + c.charCodeAt(0), 0);
-  const idx = Math.abs(hashCode) % 7;
+  const cacheKey = imagePrompt.trim().toLowerCase();
+  if (promptCache.has(cacheKey)) {
+    return promptCache.get(cacheKey);
+  }
 
-  const colors = [
-    { bg: "1a1a2e", fg: "16bfa6" }, // Teal on dark
-    { bg: "2d1b3d", fg: "e94560" }, // Pink on purple
-    { bg: "1f4068", fg: "f9c74f" }, // Yellow on blue
-    { bg: "2c3e50", fg: "e67e22" }, // Orange on dark blue
-    { bg: "34495e", fg: "3498db" }, // Light blue on gray
-    { bg: "16213e", fg: "f39c12" }, // Gold on navy
-    { bg: "0f3460", fg: "e43f5a" }, // Coral on deep blue
-  ];
+  if (activeImageGen >= IMAGE_GEN_QUEUE_LIMIT) {
+    console.log(
+      `[image-gen] queue limit reached (${activeImageGen}/${IMAGE_GEN_QUEUE_LIMIT}); using placeholder`
+    );
+    const ph = buildPlaceholder(dishTitle);
+    promptCache.set(cacheKey, ph);
+    return ph;
+  }
 
-  const { bg, fg } = colors[idx];
-  const foodEmojis = ["🍛", "🍲", "🥘", "🍜", "🍝", "🥗", "🍱"];
-  const emoji = foodEmojis[idx];
-
-  const placeholderUrl = `https://placehold.co/1200x675/${bg}/${fg}/png?text=${emoji}+${encodeURIComponent(
-    sanitizedTitle
-  )}`;
-
+  activeImageGen++;
   try {
-    // Multiple image generation services as fallbacks
-    const imageServices = [
-      {
-        name: "Pollinations AI",
-        url: `https://image.pollinations.ai/prompt/${encodeURIComponent(
-          imagePrompt
-        )}?width=1200&height=675&nologo=true&enhance=true`,
-        timeout: 15000,
-      },
-      {
-        name: "Pollinations Simple",
-        url: `https://image.pollinations.ai/prompt/${encodeURIComponent(
-          dishTitle + " food photography"
-        )}?width=1200&height=675&nologo=true`,
-        timeout: 12000,
-      },
-    ];
+    // Timeout controls how long we wait for Pollinations to stream an image.
+    // Recommended range: 15000 - 30000 ms. Higher = fewer aborts, but longer waits on failure.
+    const timeoutMs = parseInt(process.env.IMAGE_GEN_TIMEOUT || "20000", 10);
+    const attempts = parseInt(process.env.IMAGE_GEN_ATTEMPTS || "2", 10); // keep low to avoid 429
 
+    // Use a single size (smaller) to reduce server strain
+    const width = 960;
+    const height = 540;
     let imageBuffer = null;
-    let successfulService = null;
 
-    // Try each service in order
-    for (const service of imageServices) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const seed = Math.floor(Math.random() * 1_000_000);
+      const cb = Date.now();
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+        imagePrompt
+      )}?width=${width}&height=${height}&nologo=true&enhance=true&seed=${seed}&cb=${cb}`;
+      const controller = new AbortController();
+      const to = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        console.log(`Attempting image generation with ${service.name}...`);
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), service.timeout);
-
-        const imageResponse = await fetch(service.url, {
+        console.log(`[image-gen] attempt ${attempt}/${attempts}`);
+        const res = await fetch(url, {
           signal: controller.signal,
           headers: {
             Accept: "image/*",
             "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Safari/537.36",
           },
         });
-
-        clearTimeout(timeout);
-
-        if (imageResponse.ok) {
-          imageBuffer = await imageResponse.arrayBuffer();
-          successfulService = service.name;
-          console.log(`✓ Image generated successfully with ${service.name}`);
-          break;
-        } else {
+        clearTimeout(to);
+        if (res.status === 429) {
           console.log(
-            `✗ ${service.name} returned status: ${imageResponse.status}`
+            "[image-gen] received 429 Too Many Requests; aborting further attempts"
           );
+          break; // stop trying immediately
         }
-      } catch (serviceError) {
-        console.log(`✗ ${service.name} failed:`, serviceError.message);
-        continue; // Try next service
+        if (!res.ok) {
+          console.log(`[image-gen] non-ok status ${res.status}`);
+        } else {
+          const ct = res.headers.get("content-type") || "";
+          if (!ct.startsWith("image/")) {
+            console.log(`[image-gen] invalid content-type ${ct}`);
+          } else {
+            imageBuffer = await res.arrayBuffer();
+            console.log(`[image-gen] success on attempt ${attempt}`);
+            break;
+          }
+        }
+      } catch (e) {
+        clearTimeout(to);
+        console.log(
+          `[image-gen] attempt ${attempt} error: ${e.name} ${e.message}`
+        );
       }
+      if (!imageBuffer) await new Promise((r) => setTimeout(r, 300));
     }
 
-    // If no service succeeded, return placeholder
     if (!imageBuffer) {
-      console.log("All image generation services failed, using placeholder");
-      return placeholderUrl;
+      const ph = buildPlaceholder(dishTitle);
+      promptCache.set(cacheKey, ph);
+      return ph;
     }
 
-    // Upload to Supabase Storage
-    const imageBlob = new Blob([imageBuffer], { type: "image/jpeg" });
-    const timestamp = Date.now();
-    const sanitizedFilename = dishTitle
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .substring(0, 50);
-    const filename = `${sanitizedFilename}-${timestamp}.jpg`;
-
-    const { data, error } = await supabase.storage
-      .from("recipe-images")
-      .upload(filename, imageBlob, {
-        contentType: "image/jpeg",
-        cacheControl: "3600",
-        upsert: false,
-      });
-
-    if (error) {
-      console.error("Supabase upload error:", error);
-      // Return the placeholder if upload fails
-      return placeholderUrl;
+    // upload only with service role key
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      const ph = buildPlaceholder(dishTitle);
+      promptCache.set(cacheKey, ph);
+      return ph;
     }
 
-    // Get public URL
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("recipe-images").getPublicUrl(filename);
-
-    console.log(`✓ Image uploaded to Supabase: ${filename}`);
-    return publicUrl;
-  } catch (error) {
-    console.error("Image generation/upload error:", error);
-    // Always return placeholder on any error
-    return placeholderUrl;
+    try {
+      const blob = new Blob([imageBuffer], { type: "image/jpeg" });
+      const ts = Date.now();
+      const sanitized = dishTitle
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .substring(0, 50);
+      const filename = `${sanitized}-${ts}.jpg`;
+      const { error } = await supabase.storage
+        .from("recipe-images")
+        .upload(filename, blob, {
+          contentType: "image/jpeg",
+          cacheControl: "3600",
+          upsert: false,
+        });
+      if (error) {
+        console.log(
+          "[image-gen] upload error, using placeholder:",
+          error.message
+        );
+        const ph = buildPlaceholder(dishTitle);
+        promptCache.set(cacheKey, ph);
+        return ph;
+      }
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("recipe-images").getPublicUrl(filename);
+      promptCache.set(cacheKey, publicUrl);
+      return publicUrl;
+    } catch (e) {
+      console.log("[image-gen] unexpected upload failure:", e.message);
+      const ph = buildPlaceholder(dishTitle);
+      promptCache.set(cacheKey, ph);
+      return ph;
+    }
+  } finally {
+    activeImageGen = Math.max(0, activeImageGen - 1);
   }
+}
+
+// Build placeholder utility (detached so early returns can call it)
+function buildPlaceholder(title) {
+  const sanitized = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "+")
+    .substring(0, 30);
+  const colors = [
+    { bg: "1a1a2e", fg: "16bfa6" },
+    { bg: "2d1b3d", fg: "e94560" },
+    { bg: "1f4068", fg: "f9c74f" },
+    { bg: "2c3e50", fg: "e67e22" },
+    { bg: "34495e", fg: "3498db" },
+    { bg: "16213e", fg: "f39c12" },
+    { bg: "0f3460", fg: "e43f5a" },
+  ];
+  const foodEmojis = ["🍛", "🍲", "🥘", "🍜", "🍝", "🥗", "🍱"];
+  const hash = [...title].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const idx = Math.abs(hash) % colors.length;
+  const { bg, fg } = colors[idx];
+  const emoji = foodEmojis[idx];
+  return `https://placehold.co/1200x675/${bg}/${fg}/png?text=${emoji}+${encodeURIComponent(
+    sanitized
+  )}`;
 }
 
 async function callGeminiSDK(prompt, apiKey) {
@@ -533,21 +564,41 @@ Output STRICTLY valid JSON in this exact format with NO additional text:
         ingredients,
       });
 
-      // Generate and upload images to Supabase for each dish
-      const withImages = await Promise.all(
-        mocked.dishes.map(async (d) => {
-          const imagePrompt =
-            d.imagePrompt ||
-            `${d.title}, high quality food photography, studio lighting, 16:9`;
-          const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
-
-          return {
-            ...d,
-            image: imageUrl,
-            createdAt: new Date().toISOString(),
-          };
-        })
-      );
+      let withImages;
+      if (BATCH_MODE && mocked.dishes.length) {
+        // Use first dish's prompt as representative to cut request volume.
+        const representative = mocked.dishes[0];
+        const batchPrompt =
+          representative.imagePrompt ||
+          `${representative.title}, high quality food photography, studio lighting, 16:9`;
+        const sharedImage = await generateAndUploadImage(
+          batchPrompt,
+          representative.title
+        );
+        console.log(
+          `[image-gen] batch mode enabled (mock) - reused single image for ${mocked.dishes.length} dishes`
+        );
+        withImages = mocked.dishes.map((d) => ({
+          ...d,
+          image: sharedImage,
+          createdAt: new Date().toISOString(),
+          _batch: true,
+        }));
+      } else {
+        withImages = await Promise.all(
+          mocked.dishes.map(async (d) => {
+            const imagePrompt =
+              d.imagePrompt ||
+              `${d.title}, high quality food photography, studio lighting, 16:9`;
+            const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
+            return {
+              ...d,
+              image: imageUrl,
+              createdAt: new Date().toISOString(),
+            };
+          })
+        );
+      }
 
       return NextResponse.json({ dishes: withImages, source: "mock" });
     }
@@ -610,22 +661,42 @@ Output STRICTLY valid JSON in this exact format with NO additional text:
         ingredients,
       });
 
-      // Generate and upload images to Supabase for each dish
-      const withImages = await Promise.all(
-        mocked.dishes.map(async (d) => {
-          const imagePrompt =
-            d.imagePrompt ||
-            `${d.title}, high quality food photography, studio lighting, 16:9`;
-          const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
-
-          return {
-            ...d,
-            image: imageUrl,
-            createdAt: new Date().toISOString(),
-            _source: "fallback-parse",
-          };
-        })
-      );
+      let withImages;
+      if (BATCH_MODE && mocked.dishes.length) {
+        const representative = mocked.dishes[0];
+        const batchPrompt =
+          representative.imagePrompt ||
+          `${representative.title}, high quality food photography, studio lighting, 16:9`;
+        const sharedImage = await generateAndUploadImage(
+          batchPrompt,
+          representative.title
+        );
+        console.log(
+          `[image-gen] batch mode enabled (fallback) - reused single image for ${mocked.dishes.length} dishes`
+        );
+        withImages = mocked.dishes.map((d) => ({
+          ...d,
+          image: sharedImage,
+          createdAt: new Date().toISOString(),
+          _source: "fallback-parse",
+          _batch: true,
+        }));
+      } else {
+        withImages = await Promise.all(
+          mocked.dishes.map(async (d) => {
+            const imagePrompt =
+              d.imagePrompt ||
+              `${d.title}, high quality food photography, studio lighting, 16:9`;
+            const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
+            return {
+              ...d,
+              image: imageUrl,
+              createdAt: new Date().toISOString(),
+              _source: "fallback-parse",
+            };
+          })
+        );
+      }
 
       return NextResponse.json({
         dishes: withImages,
@@ -634,21 +705,40 @@ Output STRICTLY valid JSON in this exact format with NO additional text:
       });
     }
 
-    // Generate and upload images to Supabase for Gemini-generated recipes
-    const withImages = await Promise.all(
-      parsed.dishes.map(async (d) => {
-        const imagePrompt =
-          d.imagePrompt ||
-          `${d.title}, high quality food photography, studio lighting, 16:9`;
-        const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
-
-        return {
-          ...d,
-          image: imageUrl,
-          createdAt: new Date().toISOString(),
-        };
-      })
-    );
+    let withImages;
+    if (BATCH_MODE && parsed.dishes.length) {
+      const representative = parsed.dishes[0];
+      const batchPrompt =
+        representative.imagePrompt ||
+        `${representative.title}, high quality food photography, studio lighting, 16:9`;
+      const sharedImage = await generateAndUploadImage(
+        batchPrompt,
+        representative.title
+      );
+      console.log(
+        `[image-gen] batch mode enabled (gemini) - reused single image for ${parsed.dishes.length} dishes`
+      );
+      withImages = parsed.dishes.map((d) => ({
+        ...d,
+        image: sharedImage,
+        createdAt: new Date().toISOString(),
+        _batch: true,
+      }));
+    } else {
+      withImages = await Promise.all(
+        parsed.dishes.map(async (d) => {
+          const imagePrompt =
+            d.imagePrompt ||
+            `${d.title}, high quality food photography, studio lighting, 16:9`;
+          const imageUrl = await generateAndUploadImage(imagePrompt, d.title);
+          return {
+            ...d,
+            image: imageUrl,
+            createdAt: new Date().toISOString(),
+          };
+        })
+      );
+    }
 
     return NextResponse.json({ dishes: withImages, source: "gemini" });
   } catch (err) {

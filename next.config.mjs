@@ -7,8 +7,11 @@ const nextConfig = {
       { protocol: "https", hostname: "placehold.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
       { protocol: "https", hostname: "source.unsplash.com" },
-      // Add Supabase storage domain when you set it up
-      // { protocol: "https", hostname: "*.supabase.co" },
+      // Supabase Storage (use your project subdomain)
+      { protocol: "https", hostname: "zxebcwlaaotxiapbqrco.supabase.co" },
+      // Optional: allow any Supabase project (wildcard). If your Next.js version
+      // supports wildcard hostnames you can uncomment the following:
+      // { protocol: "https", hostname: "**.supabase.co" },
     ],
   },
 };
