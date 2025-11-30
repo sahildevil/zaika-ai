@@ -11,6 +11,9 @@ const DIETS = ["Vegan", "Veg", "Non-Veg", "Keto", "Jain", "Gluten-Free"];
 const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Snack"];
 const CALORIE_RANGES = ["Low", "Medium", "High", "Custom"];
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic';
+
 export default function GeneratePage() {
   return (
     <Suspense fallback={<div className="text-white/60 text-sm">Loading…</div>}>

@@ -4,6 +4,9 @@ import { useRecipes } from "../../../context/RecipeContext";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic';
+
 export default function SignInPage() {
   const { signIn } = useRecipes();
   const [email, setEmail] = useState("");

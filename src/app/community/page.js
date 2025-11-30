@@ -7,6 +7,9 @@ import { Suspense, useEffect, useRef, useState, useMemo } from "react";
 import { supabase } from "../../lib/supabaseClient";
 import RecipeModal from "../../components/RecipeModal";
 
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic';
+
 export default function CommunityPage() {
   return (
     <Suspense fallback={<div className="text-white/60 text-sm">Loading…</div>}>
