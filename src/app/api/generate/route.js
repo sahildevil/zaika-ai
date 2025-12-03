@@ -40,15 +40,15 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
 
   // If explicitly disabled, use fallback immediately
   if (process.env.POLLINATIONS_ENABLED === "false") {
-    return buildFastUnsplashImage(dishTitle);
+    return buildPlaceholder(dishTitle);
   }
 
   // Check queue limit
   if (activeImageGen >= IMAGE_GEN_QUEUE_LIMIT) {
     console.log(
-      `[image-gen] queue limit reached (${activeImageGen}/${IMAGE_GEN_QUEUE_LIMIT}); using fast image`
+      `[image-gen] queue limit reached (${activeImageGen}/${IMAGE_GEN_QUEUE_LIMIT}); using fast text placeholder`
     );
-    const ph = buildFastUnsplashImage(dishTitle);
+    const ph = buildPlaceholder(dishTitle);
     promptCache.set(cacheKey, ph);
     return ph;
   }
@@ -159,16 +159,16 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
     // If AI failed or timed out, fallback to a search-based image URL
     if (!imageBuffer) {
       console.log(
-        `[image-gen] image generation failed (${lastError}), using search-based image for "${dishTitle}"`
+        `[image-gen] image generation failed (${lastError}), using text placeholder for "${dishTitle}"`
       );
-      const ph = buildSearchImageFromTitle(dishTitle);
+      const ph = buildPlaceholder(dishTitle);
       promptCache.set(cacheKey, ph);
       return ph;
     }
 
     // upload only with service role key
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      const ph = buildSearchImageFromTitle(dishTitle);
+      const ph = buildPlaceholder(dishTitle);
       promptCache.set(cacheKey, ph);
       return ph;
     }
@@ -236,17 +236,6 @@ function buildPlaceholder(title) {
   return `https://placehold.co/1200x675/${bg}/${fg}/png?text=${emoji}+${encodeURIComponent(
     sanitized
   )}`;
-}
-
-// Fast Unsplash images for demos (no waiting, instant response)
-function buildSearchImageFromTitle(title) {
-  // Use a query-based image that rarely 404s
-  // Example providers: source.unsplash.com, loremflickr
-  const query = encodeURIComponent(
-    `${title} indian food, plated, professional`
-  );
-  // Prefer Unsplash source search (allowed in next.config.mjs)
-  return `https://source.unsplash.com/featured/1200x675/?${query}`;
 }
 
 async function callGeminiSDK(prompt, apiKey) {
