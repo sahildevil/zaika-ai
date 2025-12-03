@@ -7,7 +7,7 @@ import { supabase } from "../../lib/supabaseClient";
 import RecipeModal from "../../components/RecipeModal";
 
 // Force dynamic rendering for this page
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default function ProfilePage() {
   const {

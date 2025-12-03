@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 // Force dynamic rendering for this page
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default function SignInPage() {
   const { signIn } = useRecipes();
@@ -60,7 +60,9 @@ export default function SignInPage() {
             className="w-full h-10 glass rounded-xl px-3 text-sm text-white/90 bg-transparent border border-white/15 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
             placeholder="••••••••"
           />
-          <p className="text-[10px] text-white/45">Demo: demo@zaika.ai / zaika123</p>
+          <p className="text-[10px] text-white/45">
+            Demo: demo@zaika.ai / zaika123
+          </p>
         </div>
         {error && <p className="text-xs text-red-400">{error}</p>}
         <button
@@ -71,7 +73,10 @@ export default function SignInPage() {
         </button>
         <p className="text-[11px] text-white/55 text-center">
           Need an account?{" "}
-          <Link href="/auth/signup" className="text-[rgba(var(--accent-rgb)/0.9)] underline">
+          <Link
+            href="/auth/signup"
+            className="text-[rgba(var(--accent-rgb)/0.9)] underline"
+          >
             Sign Up
           </Link>
         </p>

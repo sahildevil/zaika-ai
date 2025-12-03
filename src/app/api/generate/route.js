@@ -29,42 +29,46 @@ const IMAGE_GEN_QUEUE_LIMIT = parseInt(
 let activeImageGen = 0;
 const promptCache = new Map(); // key -> url
 // Batch mode: generate only ONE image per group of dishes (reduces external requests & 429s)
-const BATCH_MODE = process.env.IMAGE_GEN_BATCH_MODE === "true";
+const BATCH_MODE = process.env.IMAGE_GEN_BATCH_MODE !== "false"; // Default to true for faster demos
 
 async function generateAndUploadImage(imagePrompt, dishTitle) {
-  if (process.env.POLLINATIONS_ENABLED === "false")
-    return buildPlaceholder(dishTitle);
-
   const cacheKey = imagePrompt.trim().toLowerCase();
   if (promptCache.has(cacheKey)) {
     console.log(`[image-gen] cache hit for "${dishTitle}"`);
     return promptCache.get(cacheKey);
   }
 
+  // If explicitly disabled, use fallback immediately
+  if (process.env.POLLINATIONS_ENABLED === "false") {
+    return buildFastUnsplashImage(dishTitle);
+  }
+
+  // Check queue limit
   if (activeImageGen >= IMAGE_GEN_QUEUE_LIMIT) {
     console.log(
-      `[image-gen] queue limit reached (${activeImageGen}/${IMAGE_GEN_QUEUE_LIMIT}); using placeholder`
+      `[image-gen] queue limit reached (${activeImageGen}/${IMAGE_GEN_QUEUE_LIMIT}); using fast image`
     );
-    const ph = buildPlaceholder(dishTitle);
+    const ph = buildFastUnsplashImage(dishTitle);
     promptCache.set(cacheKey, ph);
     return ph;
   }
 
   activeImageGen++;
   try {
-    // Progressive timeout: increase timeout on each retry to give more time for slow responses
+    // Demo requirement: aim for ~25s max waiting time for AI image
+    // Single attempt default (can be overridden via env)
     const baseTimeout = parseInt(process.env.IMAGE_GEN_TIMEOUT || "25000", 10);
-    const attempts = parseInt(process.env.IMAGE_GEN_ATTEMPTS || "3", 10); // increased to 3 for better success rate
+    const attempts = parseInt(process.env.IMAGE_GEN_ATTEMPTS || "1", 10);
 
     // Use a single size (smaller) to reduce server strain
-    const width = 960;
-    const height = 540;
+    const width = 800;
+    const height = 450;
     let imageBuffer = null;
     let lastError = null;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
-      // Progressive timeout: 25s, 35s, 45s
-      const timeoutMs = baseTimeout + (attempt - 1) * 10000;
+      // Use constant timeout (e.g., 25s) unless overridden by env
+      const timeoutMs = baseTimeout;
       const seed = Math.floor(Math.random() * 1_000_000);
       const cb = Date.now();
       const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
@@ -144,64 +148,27 @@ async function generateAndUploadImage(imagePrompt, dishTitle) {
         }
       }
 
-      // Exponential backoff before retry (300ms, 800ms, 1500ms)
+      // Quick backoff before retry
       if (!imageBuffer && attempt < attempts) {
-        const backoffMs = 300 * Math.pow(2, attempt - 1) + Math.random() * 200;
-        console.log(
-          `[image-gen] waiting ${Math.round(backoffMs)}ms before retry...`
-        );
+        const backoffMs = 250;
+        console.log(`[image-gen] waiting ${backoffMs}ms before retry...`);
         await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
 
-    // If Pollinations failed, try alternative providers
+    // If AI failed or timed out, fallback to a search-based image URL
     if (!imageBuffer) {
       console.log(
-        `[image-gen] Pollinations failed (${lastError}), trying fallback providers...`
+        `[image-gen] image generation failed (${lastError}), using search-based image for "${dishTitle}"`
       );
-
-      // Fallback 1: Try a simpler Pollinations request without enhance
-      try {
-        const simpleUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-          imagePrompt
-        )}?width=960&height=540&nologo=true&seed=${Math.floor(
-          Math.random() * 1000000
-        )}`;
-        const controller = new AbortController();
-        const to = setTimeout(() => controller.abort(), 15000);
-        console.log(`[image-gen] trying simplified Pollinations request...`);
-        const res = await fetch(simpleUrl, {
-          signal: controller.signal,
-          headers: { Accept: "image/*" },
-        });
-        clearTimeout(to);
-        if (res.ok && res.headers.get("content-type")?.startsWith("image/")) {
-          imageBuffer = await res.arrayBuffer();
-          console.log(
-            `[image-gen] ✓ fallback succeeded with simplified Pollinations (${(
-              imageBuffer.byteLength / 1024
-            ).toFixed(1)}KB)`
-          );
-        }
-      } catch (e) {
-        console.log(
-          `[image-gen] simplified Pollinations also failed: ${e.message}`
-        );
-      }
-    }
-
-    if (!imageBuffer) {
-      console.log(
-        `[image-gen] all providers failed, using placeholder for "${dishTitle}"`
-      );
-      const ph = buildPlaceholder(dishTitle);
+      const ph = buildSearchImageFromTitle(dishTitle);
       promptCache.set(cacheKey, ph);
       return ph;
     }
 
     // upload only with service role key
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      const ph = buildPlaceholder(dishTitle);
+      const ph = buildSearchImageFromTitle(dishTitle);
       promptCache.set(cacheKey, ph);
       return ph;
     }
@@ -269,6 +236,17 @@ function buildPlaceholder(title) {
   return `https://placehold.co/1200x675/${bg}/${fg}/png?text=${emoji}+${encodeURIComponent(
     sanitized
   )}`;
+}
+
+// Fast Unsplash images for demos (no waiting, instant response)
+function buildSearchImageFromTitle(title) {
+  // Use a query-based image that rarely 404s
+  // Example providers: source.unsplash.com, loremflickr
+  const query = encodeURIComponent(
+    `${title} indian food, plated, professional`
+  );
+  // Prefer Unsplash source search (allowed in next.config.mjs)
+  return `https://source.unsplash.com/featured/1200x675/?${query}`;
 }
 
 async function callGeminiSDK(prompt, apiKey) {

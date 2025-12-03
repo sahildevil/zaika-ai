@@ -12,7 +12,7 @@ const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Snack"];
 const CALORIE_RANGES = ["Low", "Medium", "High", "Custom"];
 
 // Force dynamic rendering for this page
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default function GeneratePage() {
   return (

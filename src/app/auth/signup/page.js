@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 // Force dynamic rendering for this page
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default function SignUpPage() {
   const { signUp } = useRecipes();
@@ -89,7 +89,10 @@ export default function SignUpPage() {
         </button>
         <p className="text-[11px] text-white/55 text-center">
           Already have an account?{" "}
-          <Link href="/auth/signin" className="text-[rgba(var(--accent-rgb)/0.9)] underline">
+          <Link
+            href="/auth/signin"
+            className="text-[rgba(var(--accent-rgb)/0.9)] underline"
+          >
             Sign In
           </Link>
         </p>
