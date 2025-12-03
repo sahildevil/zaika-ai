@@ -61,6 +61,7 @@ function IngredientSelector({ value, onChange, fasting }) {
           }
         }}
         placeholder="Search ingredients"
+        aria-label="Search ingredients"
         className="w-full h-10 rounded-xl glass px-3 text-sm placeholder:text-white/35 text-white/90 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
       />
       {value.length > 0 && (
@@ -71,6 +72,7 @@ function IngredientSelector({ value, onChange, fasting }) {
               key={`sel-${i}`}
               onClick={() => toggle(i)}
               className="text-[11px] px-3 py-1 rounded-full transition border text-white bg-[rgba(var(--accent-rgb)/0.24)] border-[rgba(var(--accent-rgb)/0.5)] hover:bg-[rgba(var(--accent-rgb)/0.32)]"
+              aria-label={`Remove ingredient ${i}`}
               title="Click to remove"
             >
               {i} ✕
