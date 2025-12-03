@@ -34,7 +34,9 @@ function IngredientSelector({ value, onChange, fasting }) {
     const base = q
       ? MASTER_INGREDIENTS.filter((i) => i.toLowerCase().includes(q))
       : MASTER_INGREDIENTS;
-    return base.filter((i) => !fasting || !["Onion", "Garlic", "Chicken"].includes(i));
+    return base.filter(
+      (i) => !fasting || !["Onion", "Garlic", "Chicken"].includes(i)
+    );
   }, [query, fasting]);
 
   function toggle(ing) {
@@ -47,9 +49,40 @@ function IngredientSelector({ value, onChange, fasting }) {
       <input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            const q = query.trim();
+            if (!q) return;
+            // Allow custom ingredient entry if not already selected
+            if (!value.includes(q)) {
+              onChange([...value, q]);
+            }
+            setQuery("");
+          }
+        }}
         placeholder="Search ingredients"
         className="w-full h-10 rounded-xl glass px-3 text-sm placeholder:text-white/35 text-white/90 focus:outline-none focus:ring-2 focus:ring-[rgba(var(--accent-rgb)/0.45)]"
       />
+      {value.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {value.map((i) => (
+            <button
+              type="button"
+              key={`sel-${i}`}
+              onClick={() => toggle(i)}
+              className="text-[11px] px-3 py-1 rounded-full transition border text-white bg-[rgba(var(--accent-rgb)/0.24)] border-[rgba(var(--accent-rgb)/0.5)] hover:bg-[rgba(var(--accent-rgb)/0.32)]"
+              title="Click to remove"
+            >
+              {i} ✕
+            </button>
+          ))}
+        </div>
+      )}
+      {query.trim() && filtered.length === 0 && (
+        <div className="text-xs text-white/70">
+          Press Enter to add "{query.trim()}" as a custom ingredient
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-48 overflow-auto pr-1">
         {filtered.map((i) => {
           const active = value.includes(i);
